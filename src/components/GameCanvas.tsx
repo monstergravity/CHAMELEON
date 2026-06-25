@@ -106,6 +106,47 @@ interface SunflowerPowerup {
   timeLeft: number; // in seconds, disappears after 6 seconds
 }
 
+// New powerup interfaces
+interface TimeFreezePowerup {
+  x: number;
+  y: number;
+  radius: number;
+  active: boolean;
+  timeLeft: number; // disappears after 8 seconds
+  cooldownLeft: number; // cooldown before next spawn
+}
+
+interface DecoyFrogPowerup {
+  x: number;
+  y: number;
+  radius: number;
+  active: boolean;
+  timeLeft: number; // disappears after 8 seconds
+  cooldownLeft: number;
+}
+
+interface PalettePowerup {
+  x: number;
+  y: number;
+  radius: number;
+  active: boolean;
+  timeLeft: number; // disappears after 10 seconds
+  cooldownLeft: number;
+}
+
+interface DecoyEntity {
+  id: number;
+  x: number;
+  y: number;
+  radius: number;
+  color: string;
+  timeLeft: number; // lasts 5 seconds
+  pulseTime: number; // animation
+}
+
+// Mask levels list
+const MASK_LEVELS = ['sunflowers', 'thekiss', 'venus', 'liberty', 'persistence', 'cafeterrace'] as const;
+
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   painting,
   onLevelCleared,
@@ -166,6 +207,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const sunflowerPowerupRef = useRef<SunflowerPowerup | null>(null);
   const powerupRespawnTimerRef = useRef<number>(0); // timer to spawn next powerup
   const frameCountRef = useRef<number>(0);
+
+  // Universal Powerup System - All levels
+  const timeFreezePowerupRef = useRef<TimeFreezePowerup | null>(null);
+  const decoyFrogPowerupRef = useRef<DecoyFrogPowerup | null>(null);
+  const palettePowerupRef = useRef<PalettePowerup | null>(null);
+  const decoyEntitiesRef = useRef<DecoyEntity[]>([]);
+  const timeFreezeActiveRef = useRef<boolean>(false);
+  const timeFreezeTimeLeftRef = useRef<number>(0);
+  const [hasPaletteUpgrade, setHasPaletteUpgrade] = useState(false);
+
+  // Mask level reveal rate (reused for all mask levels)
+  const [maskRevealRate, setMaskRevealRate] = useState(0);
 
   // Track if game is active
   const isGameRunning = useRef<boolean>(true);
@@ -384,9 +437,42 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     guardsRef.current = guards;
     particlesRef.current = [];
 
-    // Reset Sunflower state
+    // Reset Mask Level State
+    setMaskRevealRate(0);
     setSunflowerRevealRate(0);
     clonesRef.current = [];
+
+    // Reset Powerup State
+    timeFreezePowerupRef.current = {
+      x: 200 + Math.random() * (WIDTH - 400),
+      y: 100 + Math.random() * (HEIGHT - 200),
+      radius: 16,
+      active: true,
+      timeLeft: 8.0,
+      cooldownLeft: 0,
+    };
+    decoyFrogPowerupRef.current = {
+      x: 400 + Math.random() * (WIDTH - 500),
+      y: 150 + Math.random() * (HEIGHT - 300),
+      radius: 16,
+      active: true,
+      timeLeft: 8.0,
+      cooldownLeft: 0,
+    };
+    palettePowerupRef.current = {
+      x: 600 + Math.random() * (WIDTH - 600),
+      y: 200 + Math.random() * (HEIGHT - 400),
+      radius: 16,
+      active: true,
+      timeLeft: 10.0,
+      cooldownLeft: 0,
+    };
+    decoyEntitiesRef.current = [];
+    timeFreezeActiveRef.current = false;
+    timeFreezeTimeLeftRef.current = 0;
+    setHasPaletteUpgrade(false);
+
+    // Sunflower-specific powerup
     if (painting.proceduralType === 'sunflowers') {
       sunflowerPowerupRef.current = {
         x: 200 + Math.random() * (WIDTH - 400),
@@ -401,8 +487,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       powerupRespawnTimerRef.current = 0;
     }
 
-    // Initialize reveal canvas if Sunflowers level
-    if (painting.proceduralType === 'sunflowers') {
+    // Initialize reveal canvas for mask levels
+    if (MASK_LEVELS.includes(painting.proceduralType)) {
       const rCanvas = document.createElement('canvas');
       rCanvas.width = WIDTH;
       rCanvas.height = HEIGHT;
@@ -1126,6 +1212,551 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fill();
         ctx.restore();
       });
+    } else if (type === 'thekiss') {
+      // Gustav Klimt's The Kiss - Golden geometric abstraction
+      // Rich gold background with geometric mosaic pattern
+      const bgGrad = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      bgGrad.addColorStop(0, '#d4af37');
+      bgGrad.addColorStop(0.3, '#e5a93b');
+      bgGrad.addColorStop(0.6, '#b8860b');
+      bgGrad.addColorStop(1, '#8b6914');
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Geometric mosaic tiles background
+      const mosaicColors = ['#c9a227', '#8b7355', '#6b4423', '#f48fb1', '#26a69a', '#ef5350', '#cfd8dc'];
+      for (let y = 0; y < HEIGHT; y += 18) {
+        for (let x = 0; x < WIDTH; x += 18) {
+          if (Math.random() > 0.4) {
+            const colorIdx = Math.floor(Math.random() * mosaicColors.length);
+            ctx.fillStyle = mosaicColors[colorIdx];
+            const size = 8 + Math.random() * 8;
+            ctx.fillRect(x + (Math.random() - 0.5) * 4, y + (Math.random() - 0.5) * 4, size, size);
+          }
+        }
+      }
+
+      // The embracing figures silhouette in center
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath();
+      // Male figure (left)
+      ctx.moveTo(450, 700);
+      ctx.lineTo(420, 350);
+      ctx.quadraticCurveTo(400, 280, 430, 220);
+      ctx.arc(455, 200, 45, 0, Math.PI * 2); // Head
+      ctx.quadraticCurveTo(500, 220, 520, 280);
+      ctx.lineTo(550, 350);
+      ctx.lineTo(520, 700);
+      ctx.fill();
+
+      // Female figure (right, kneeling)
+      ctx.fillStyle = '#1a1a1a';
+      ctx.beginPath();
+      ctx.moveTo(550, 700);
+      ctx.lineTo(580, 400);
+      ctx.quadraticCurveTo(600, 320, 620, 280);
+      ctx.arc(645, 260, 40, 0, Math.PI * 2); // Head
+      ctx.quadraticCurveTo(670, 300, 680, 380);
+      ctx.lineTo(690, 700);
+      ctx.fill();
+
+      // Gold leaf overlay patterns (spiral shapes)
+      for (let i = 0; i < 8; i++) {
+        ctx.strokeStyle = 'rgba(255, 215, 0, 0.6)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        const cx = 200 + i * 120;
+        const cy = 100 + (i % 3) * 250;
+        for (let angle = 0; angle < Math.PI * 6; angle += 0.2) {
+          const r = 30 + angle * 8;
+          const x = cx + Math.cos(angle) * r;
+          const y = cy + Math.sin(angle) * r;
+          if (angle === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+
+      // Decorative gold frame elements
+      ctx.strokeStyle = '#d4af37';
+      ctx.lineWidth = 3;
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath();
+        ctx.moveTo(50, 100 + i * 120);
+        ctx.lineTo(100, 150 + i * 120);
+        ctx.lineTo(80, 200 + i * 120);
+        ctx.stroke();
+      }
+
+    } else if (type === 'venus') {
+      // Botticelli's The Birth of Venus - Renaissance elegance
+      // Serene sea background
+      const seaGrad = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      seaGrad.addColorStop(0, '#87ceeb');
+      seaGrad.addColorStop(0.3, '#add8e6');
+      seaGrad.addColorStop(0.7, '#40e0d0');
+      seaGrad.addColorStop(1, '#20b2aa');
+      ctx.fillStyle = seaGrad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Wind zephyrs (left side)
+      ctx.fillStyle = 'rgba(255, 248, 220, 0.8)';
+      for (let i = 0; i < 2; i++) {
+        ctx.save();
+        ctx.translate(100 + i * 80, 300 + i * 50);
+        // Flowing robes
+        ctx.beginPath();
+        ctx.moveTo(-30, 50);
+        ctx.quadraticCurveTo(-60, 100, -30, 200);
+        ctx.quadraticCurveTo(0, 250, 30, 200);
+        ctx.quadraticCurveTo(60, 100, 30, 50);
+        ctx.closePath();
+        ctx.fill();
+        // Head
+        ctx.fillStyle = '#ffebcd';
+        ctx.beginPath();
+        ctx.arc(0, 0, 20, 0, Math.PI * 2);
+        ctx.fill();
+        // Hair
+        ctx.fillStyle = '#fada43';
+        ctx.beginPath();
+        ctx.arc(0, -5, 22, Math.PI, 0);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      // Giant scallop shell (center)
+      ctx.fillStyle = '#ffcdd2';
+      ctx.beginPath();
+      ctx.ellipse(550, 450, 120, 80, 0, 0, Math.PI * 1.8);
+      ctx.lineTo(550, 450);
+      ctx.closePath();
+      ctx.fill();
+
+      // Shell ridges
+      ctx.strokeStyle = '#f48fb1';
+      ctx.lineWidth = 2;
+      for (let i = 1; i <= 4; i++) {
+        ctx.beginPath();
+        ctx.ellipse(550, 450, 120 - i * 20, 80 - i * 13, 0, 0, Math.PI * 1.8);
+        ctx.stroke();
+      }
+
+      // Venus figure (emerging from shell)
+      ctx.save();
+      ctx.translate(550, 350);
+      // Body
+      ctx.fillStyle = '#ffebee';
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 35, 50, 0.1, 0, Math.PI * 2);
+      ctx.fill();
+      // Head
+      ctx.beginPath();
+      ctx.arc(0, -60, 25, 0, Math.PI * 2);
+      ctx.fill();
+      // Golden hair
+      ctx.fillStyle = '#fada43';
+      ctx.beginPath();
+      ctx.moveTo(-25, -75);
+      ctx.quadraticCurveTo(-35, -120, 0, -100);
+      ctx.quadraticCurveTo(35, -120, 25, -75);
+      ctx.quadraticCurveTo(20, -60, 0, -50);
+      ctx.quadraticCurveTo(-20, -60, -25, -75);
+      ctx.fill();
+      ctx.restore();
+
+      // Falling rose petals
+      const petalPositions = [
+        { x: 300, y: 200 }, { x: 350, y: 280 }, { x: 400, y: 350 },
+        { x: 600, y: 220 }, { x: 650, y: 300 }, { x: 700, y: 380 },
+        { x: 450, y: 180 }, { x: 500, y: 250 }, { x: 550, y: 320 },
+        { x: 250, y: 400 }, { x: 750, y: 450 }
+      ];
+      petalPositions.forEach(p => {
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(Math.random() * Math.PI);
+        ctx.fillStyle = '#ff80ab';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 8, 4, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      });
+
+      // Right side figure (offering cloak)
+      ctx.fillStyle = '#8b4513';
+      ctx.beginPath();
+      ctx.moveTo(850, 700);
+      ctx.lineTo(830, 400);
+      ctx.quadraticCurveTo(850, 350, 820, 300);
+      ctx.quadraticCurveTo(790, 350, 800, 400);
+      ctx.lineTo(820, 700);
+      ctx.fill();
+
+    } else if (type === 'liberty') {
+      // Delacroix's Liberty Leading the People - Romantic revolution
+      // Sky with dramatic clouds
+      const skyGrad = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      skyGrad.addColorStop(0, '#4a5568');
+      skyGrad.addColorStop(0.3, '#718096');
+      skyGrad.addColorStop(0.6, '#c53030'); // Red sky tone
+      skyGrad.addColorStop(1, '#2d3748');
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Smoke clouds (battle scene)
+      for (let i = 0; i < 8; i++) {
+        ctx.fillStyle = `rgba(138, 112, 86, ${0.3 + Math.random() * 0.4})`;
+        ctx.beginPath();
+        const cx = 100 + Math.random() * (WIDTH - 200);
+        const cy = 100 + Math.random() * 300;
+        ctx.arc(cx, cy, 40 + Math.random() * 60, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Tricolor flag (Blue-White-Red) flowing
+      ctx.save();
+      ctx.translate(400, 200);
+      ctx.rotate(-0.2);
+      // Blue stripe
+      ctx.fillStyle = '#0f4c81';
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(50, 50, 30, 150);
+      ctx.lineTo(10, 0);
+      ctx.quadraticCurveTo(-30, 50, -20, 150);
+      ctx.closePath();
+      ctx.fill();
+      // White stripe
+      ctx.fillStyle = '#f7fafc';
+      ctx.beginPath();
+      ctx.moveTo(30, 0);
+      ctx.quadraticCurveTo(80, 50, 60, 150);
+      ctx.lineTo(30, 150);
+      ctx.quadraticCurveTo(20, 50, 0, 0);
+      ctx.closePath();
+      ctx.fill();
+      // Red stripe
+      ctx.fillStyle = '#c53030';
+      ctx.beginPath();
+      ctx.moveTo(60, 0);
+      ctx.quadraticCurveTo(110, 50, 90, 150);
+      ctx.lineTo(60, 150);
+      ctx.quadraticCurveTo(50, 50, 30, 0);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+
+      // Liberty figure silhouette
+      ctx.fillStyle = '#1a202c';
+      ctx.beginPath();
+      // Dress body
+      ctx.moveTo(420, 700);
+      ctx.lineTo(400, 450);
+      ctx.quadraticCurveTo(420, 400, 450, 380);
+      ctx.arc(460, 360, 25, 0, Math.PI * 2); // Head
+      ctx.quadraticCurveTo(500, 400, 520, 450);
+      ctx.lineTo(540, 700);
+      ctx.fill();
+
+      // Raised arm with Phrygian cap
+      ctx.strokeStyle = '#1a202c';
+      ctx.lineWidth = 8;
+      ctx.beginPath();
+      ctx.moveTo(500, 380);
+      ctx.lineTo(530, 320);
+      ctx.stroke();
+      // Cap
+      ctx.fillStyle = '#c53030';
+      ctx.beginPath();
+      ctx.moveTo(530, 320);
+      ctx.lineTo(520, 290);
+      ctx.lineTo(540, 295);
+      ctx.closePath();
+      ctx.fill();
+
+      // Rifle/musket
+      ctx.strokeStyle = '#1a202c';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(480, 420);
+      ctx.lineTo(430, 380);
+      ctx.stroke();
+
+      // Barricade and fallen figures
+      ctx.fillStyle = '#2d3748';
+      ctx.fillRect(100, 550, 200, 150);
+      ctx.fillStyle = '#4a5568';
+      ctx.fillRect(800, 580, 150, 120);
+
+      // Cobblestones texture (ground)
+      for (let y = 550; y < HEIGHT; y += 20) {
+        for (let x = 0; x < WIDTH; x += 25) {
+          ctx.fillStyle = Math.random() > 0.5 ? '#4a5568' : '#2d3748';
+          ctx.beginPath();
+          ctx.ellipse(x + (y % 40) * 10, y, 8, 6, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+    } else if (type === 'persistence') {
+      // Dali's The Persistence of Memory - Surreal melting dreams
+      // Desert landscape with surreal blue sky
+      const skyGrad = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      skyGrad.addColorStop(0, '#0f3c5f');
+      skyGrad.addColorStop(0.4, '#1e5a7a');
+      skyGrad.addColorStop(0.7, '#e2b36e');
+      skyGrad.addColorStop(1, '#df8f3d');
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Distant mountains/horizon
+      ctx.fillStyle = '#0f3c5f';
+      ctx.beginPath();
+      ctx.moveTo(0, 450);
+      ctx.quadraticCurveTo(300, 400, 600, 430);
+      ctx.quadraticCurveTo(850, 400, WIDTH, 450);
+      ctx.lineTo(WIDTH, 700);
+      ctx.lineTo(0, 700);
+      ctx.fill();
+
+      // Withered olive tree (left)
+      ctx.strokeStyle = '#5d4037';
+      ctx.lineWidth = 6;
+      ctx.beginPath();
+      ctx.moveTo(150, 700);
+      ctx.lineTo(140, 500);
+      ctx.quadraticCurveTo(150, 350, 200, 250);
+      ctx.stroke();
+      // Dead branches
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(160, 450);
+      ctx.quadraticCurveTo(200, 400, 250, 380);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(155, 400);
+      ctx.quadraticCurveTo(120, 300, 100, 250);
+      ctx.stroke();
+
+      // Melting pocket watches
+      const watches = [
+        { x: 400, y: 350, rx: 60, ry: 30, rotation: 0.3 },
+        { x: 650, y: 280, rx: 50, ry: 25, rotation: -0.4 },
+        { x: 300, y: 500, rx: 40, ry: 20, rotation: 0.8 }
+      ];
+      watches.forEach(w => {
+        ctx.save();
+        ctx.translate(w.x, w.y);
+        ctx.rotate(w.rotation);
+        // Watch face (distorted oval)
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.ellipse(0, 0, w.rx, w.ry, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#1a202c';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        // Clock hands
+        ctx.strokeStyle = '#1a202c';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -w.rx * 0.6);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(w.rx * 0.4, 0);
+        ctx.stroke();
+        // Ants on watch (surreal element)
+        ctx.fillStyle = '#1a202c';
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.arc(-w.rx * 0.6 + i * 8, w.ry * 0.3, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      });
+
+      // Strange creature (sleeping face-like blob)
+      ctx.fillStyle = '#e2b36e';
+      ctx.beginPath();
+      ctx.moveTo(750, 500);
+      ctx.quadraticCurveTo(720, 420, 780, 380);
+      ctx.quadraticCurveTo(850, 420, 880, 500);
+      ctx.quadraticCurveTo(860, 580, 750, 580);
+      ctx.closePath();
+      ctx.fill();
+      // Closed eye lines
+      ctx.strokeStyle = '#1a202c';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(770, 450);
+      ctx.quadraticCurveTo(800, 440, 830, 450);
+      ctx.stroke();
+
+      // Plate with ant-covered object
+      ctx.fillStyle = '#8b7355';
+      ctx.beginPath();
+      ctx.ellipse(500, 600, 60, 20, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // Object on plate
+      ctx.fillStyle = '#5d4037';
+      ctx.beginPath();
+      ctx.ellipse(500, 580, 25, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      // More ants
+      ctx.fillStyle = '#1a202c';
+      for (let i = 0; i < 6; i++) {
+        ctx.beginPath();
+        ctx.arc(480 + i * 10 + Math.random() * 10, 595 + Math.random() * 10, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+    } else if (type === 'cafeterrace') {
+      // Van Gogh's Café Terrace at Night - Impressionist night scene
+      // Deep cobalt night sky
+      const skyGrad = ctx.createLinearGradient(0, 0, 0, HEIGHT * 0.6);
+      skyGrad.addColorStop(0, '#0c1446');
+      skyGrad.addColorStop(0.5, '#1e3a8a');
+      skyGrad.addColorStop(1, '#1e40af');
+      ctx.fillStyle = skyGrad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      // Starry night sky with rotating brushstrokes
+      const stars = [
+        { x: 150, y: 80 }, { x: 300, y: 120 }, { x: 450, y: 60 },
+        { x: 600, y: 100 }, { x: 750, y: 70 }, { x: 900, y: 110 },
+        { x: 200, y: 180 }, { x: 800, y: 160 }
+      ];
+      stars.forEach(star => {
+        // Star glow
+        const radGrad = ctx.createRadialGradient(star.x, star.y, 1, star.x, star.y, 25);
+        radGrad.addColorStop(0, '#ffffff');
+        radGrad.addColorStop(0.3, '#fada43');
+        radGrad.addColorStop(0.7, 'rgba(240, 210, 60, 0.3)');
+        radGrad.addColorStop(1, 'rgba(12, 20, 70, 0)');
+        ctx.fillStyle = radGrad;
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, 25, 0, Math.PI * 2);
+        ctx.fill();
+        // Star core
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(star.x, star.y, 4, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Large crescent moon
+      ctx.fillStyle = '#fada43';
+      ctx.shadowColor = '#e39d24';
+      ctx.shadowBlur = 20;
+      ctx.beginPath();
+      ctx.arc(850, 80, 35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#0c1446';
+      ctx.beginPath();
+      ctx.arc(835, 80, 30, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Swirling night sky brushstrokes (Van Gogh style)
+      ctx.strokeStyle = 'rgba(94, 139, 196, 0.4)';
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath();
+        ctx.moveTo(50 + i * 150, 200);
+        ctx.bezierCurveTo(150 + i * 100, 150, 250 + i * 80, 220, 350 + i * 120, 200);
+        ctx.stroke();
+      }
+
+      // Café terrace floor (cobblestones)
+      ctx.fillStyle = '#00796b';
+      ctx.fillRect(0, HEIGHT * 0.5, WIDTH, HEIGHT * 0.5);
+      // Cobblestone pattern
+      ctx.fillStyle = '#00695c';
+      for (let y = HEIGHT * 0.5; y < HEIGHT; y += 25) {
+        for (let x = 0; x < WIDTH; x += 25) {
+          ctx.beginPath();
+          ctx.ellipse(x + (y % 50) * 10, y, 10, 8, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Café building facades
+      // Left building
+      ctx.fillStyle = '#4a5568';
+      ctx.fillRect(50, HEIGHT * 0.5 - 180, 200, 180);
+      // Windows with warm light
+      ctx.fillStyle = '#ffc107';
+      for (let i = 0; i < 3; i++) {
+        ctx.fillRect(80, HEIGHT * 0.5 - 150 + i * 40, 40, 30);
+        ctx.fillRect(150, HEIGHT * 0.5 - 150 + i * 40, 40, 30);
+      }
+      // Window shutters
+      ctx.fillStyle = '#bf360c';
+      for (let i = 0; i < 3; i++) {
+        ctx.fillRect(75, HEIGHT * 0.5 - 150 + i * 40, 5, 30);
+        ctx.fillRect(120, HEIGHT * 0.5 - 150 + i * 40, 5, 30);
+        ctx.fillRect(145, HEIGHT * 0.5 - 150 + i * 40, 5, 30);
+        ctx.fillRect(190, HEIGHT * 0.5 - 150 + i * 40, 5, 30);
+      }
+
+      // Main café (center)
+      ctx.fillStyle = '#3b4f5e';
+      ctx.fillRect(250, HEIGHT * 0.5 - 200, 400, 200);
+      // Large windows with golden light
+      ctx.fillStyle = '#ffc107';
+      for (let i = 0; i < 4; i++) {
+        ctx.fillRect(270, HEIGHT * 0.5 - 170 + i * 40, 80, 35);
+        ctx.fillRect(370, HEIGHT * 0.5 - 170 + i * 40, 80, 35);
+      }
+      // Café awning/stripe pattern
+      ctx.fillStyle = '#ffc107';
+      ctx.fillRect(250, HEIGHT * 0.5 - 200, 400, 20);
+      ctx.fillStyle = '#0c1446';
+      for (let i = 0; i < 20; i++) {
+        ctx.fillRect(250 + i * 20, HEIGHT * 0.5 - 200, 10, 20);
+      }
+
+      // Right building
+      ctx.fillStyle = '#4a5568';
+      ctx.fillRect(650, HEIGHT * 0.5 - 160, 180, 160);
+      // Windows
+      ctx.fillStyle = '#ffc107';
+      for (let i = 0; i < 2; i++) {
+        ctx.fillRect(670, HEIGHT * 0.5 - 130 + i * 50, 50, 40);
+        ctx.fillRect(750, HEIGHT * 0.5 - 130 + i * 50, 50, 40);
+      }
+
+      // Terrace tables and chairs
+      const tablePositions = [
+        { x: 300, y: HEIGHT * 0.5 + 50 }, { x: 400, y: HEIGHT * 0.5 + 80 },
+        { x: 500, y: HEIGHT * 0.5 + 40 }, { x: 600, y: HEIGHT * 0.5 + 70 }
+      ];
+      tablePositions.forEach(pos => {
+        // Table top
+        ctx.fillStyle = '#bf360c';
+        ctx.beginPath();
+        ctx.ellipse(pos.x, pos.y, 25, 15, 0, 0, Math.PI * 2);
+        ctx.fill();
+        // Table legs
+        ctx.fillStyle = '#3b4f5e';
+        ctx.fillRect(pos.x - 3, pos.y, 6, 30);
+        // Chairs (simplified)
+        ctx.fillStyle = '#bf360c';
+        ctx.fillRect(pos.x - 40, pos.y + 10, 10, 25);
+        ctx.fillRect(pos.x + 30, pos.y + 10, 10, 25);
+      });
+
+      // People silhouettes at tables
+      ctx.fillStyle = '#0c1446';
+      tablePositions.slice(0, 2).forEach(pos => {
+        ctx.beginPath();
+        ctx.arc(pos.x, pos.y - 20, 12, 0, Math.PI * 2); // Head
+        ctx.fill();
+      });
     }
   };
 
@@ -1291,6 +1922,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (frameCountRef.current % 10 === 0) {
           const pct = 100 - getWhiteMaskPercentage();
           setSunflowerRevealRate(Math.min(100, Math.round(pct)));
+          setMaskRevealRate(Math.min(100, Math.round(pct)));
 
           // Size scaling: radius goes from 16 up to 34
           player.radius = 16 + (pct / 100) * 18;
@@ -1304,6 +1936,148 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           }
         }
       }
+
+      // Handle mask levels (universal)
+      if (MASK_LEVELS.includes(painting.proceduralType) && painting.proceduralType !== 'sunflowers') {
+        // Reveal paint under player
+        revealPaintingAt(player.x, player.y, player.radius + 6);
+
+        // Reveal calculations
+        frameCountRef.current++;
+        if (frameCountRef.current % 10 === 0) {
+          const pct = 100 - getWhiteMaskPercentage();
+          setMaskRevealRate(Math.min(100, Math.round(pct)));
+
+          // Size scaling: radius goes from 16 up to 34
+          player.radius = 16 + (pct / 100) * 18;
+
+          // Clear target check (win condition)
+          if (pct >= 98) {
+            isGameRunning.current = false;
+            audio.playWin();
+            onLevelCleared();
+            return;
+          }
+        }
+      }
+
+      // ===== UNIVERSAL POWERUP SYSTEM =====
+      const handlePowerupCollision = (powerup: TimeFreezePowerup | DecoyFrogPowerup | PalettePowerup | null, type: 'freeze' | 'decoy' | 'palette') => {
+        if (!powerup || !powerup.active) return;
+        const distToPowerup = Math.hypot(player.x - powerup.x, player.y - powerup.y);
+        if (distToPowerup < player.radius + powerup.radius) {
+          powerup.active = false;
+          audio.playCollect();
+          const powerupColor = type === 'freeze' ? '#3b82f6' : type === 'decoy' ? '#22c55e' : '#f59e0b';
+          spawnSplatParticles(powerup.x, powerup.y, powerupColor);
+
+          if (type === 'freeze') {
+            // Time freeze: stops guards for 3 seconds
+            timeFreezeActiveRef.current = true;
+            timeFreezeTimeLeftRef.current = 3.0;
+            powerup.cooldownLeft = 15.0; // 15 second cooldown
+          } else if (type === 'decoy') {
+            // Decoy frog: place a decoy entity at player position
+            decoyEntitiesRef.current.push({
+              id: Date.now(),
+              x: player.x,
+              y: player.y,
+              radius: 14,
+              color: '#22c55e',
+              timeLeft: 5.0, // lasts 5 seconds
+              pulseTime: 0,
+            });
+            powerup.cooldownLeft = 12.0; // 12 second cooldown
+          } else if (type === 'palette') {
+            // Palette upgrade: extends camouflage time from 6s to 10s (one-time)
+            if (!hasPaletteUpgrade) {
+              player.camoMaxTime = 10.0;
+              player.camoTimeLeft = 10.0;
+              setHasPaletteUpgrade(true);
+              powerup.cooldownLeft = 99999; // permanent once used
+            }
+          }
+        }
+      };
+
+      // Update Time Freeze Powerup
+      const tfPowerup = timeFreezePowerupRef.current;
+      if (tfPowerup) {
+        if (tfPowerup.active) {
+          tfPowerup.timeLeft -= 1 / 60;
+          if (tfPowerup.timeLeft <= 0) {
+            tfPowerup.active = false;
+          }
+          handlePowerupCollision(tfPowerup, 'freeze');
+        } else if (tfPowerup.cooldownLeft > 0) {
+          tfPowerup.cooldownLeft -= 1 / 60;
+          if (tfPowerup.cooldownLeft <= 0) {
+            tfPowerup.active = true;
+            tfPowerup.timeLeft = 8.0;
+            tfPowerup.x = 200 + Math.random() * (WIDTH - 400);
+            tfPowerup.y = 100 + Math.random() * (HEIGHT - 200);
+          }
+        }
+      }
+
+      // Update Decoy Frog Powerup
+      const dfPowerup = decoyFrogPowerupRef.current;
+      if (dfPowerup) {
+        if (dfPowerup.active) {
+          dfPowerup.timeLeft -= 1 / 60;
+          if (dfPowerup.timeLeft <= 0) {
+            dfPowerup.active = false;
+          }
+          handlePowerupCollision(dfPowerup, 'decoy');
+        } else if (dfPowerup.cooldownLeft > 0) {
+          dfPowerup.cooldownLeft -= 1 / 60;
+          if (dfPowerup.cooldownLeft <= 0) {
+            dfPowerup.active = true;
+            dfPowerup.timeLeft = 8.0;
+            dfPowerup.x = 400 + Math.random() * (WIDTH - 500);
+            dfPowerup.y = 150 + Math.random() * (HEIGHT - 300);
+          }
+        }
+      }
+
+      // Update Palette Powerup (only active if not collected yet)
+      const palPowerup = palettePowerupRef.current;
+      if (palPowerup) {
+        if (palPowerup.active && !hasPaletteUpgrade) {
+          palPowerup.timeLeft -= 1 / 60;
+          if (palPowerup.timeLeft <= 0) {
+            palPowerup.active = false;
+          }
+          handlePowerupCollision(palPowerup, 'palette');
+        } else if (palPowerup.cooldownLeft > 0) {
+          palPowerup.cooldownLeft -= 1 / 60;
+          if (palPowerup.cooldownLeft <= 0 && !hasPaletteUpgrade) {
+            palPowerup.active = true;
+            palPowerup.timeLeft = 10.0;
+            palPowerup.x = 600 + Math.random() * (WIDTH - 600);
+            palPowerup.y = 200 + Math.random() * (HEIGHT - 400);
+          }
+        }
+      }
+
+      // Update Time Freeze Timer
+      if (timeFreezeActiveRef.current) {
+        timeFreezeTimeLeftRef.current -= 1 / 60;
+        if (timeFreezeTimeLeftRef.current <= 0) {
+          timeFreezeActiveRef.current = false;
+        }
+      }
+
+      // Update Decoy Entities
+      decoyEntitiesRef.current = decoyEntitiesRef.current.filter(decoy => {
+        decoy.timeLeft -= 1 / 60;
+        decoy.pulseTime += 0.1;
+        if (decoy.timeLeft <= 0) {
+          spawnSplatParticles(decoy.x, decoy.y, decoy.color);
+          return false;
+        }
+        return true;
+      });
 
       // Smooth color transition
       if (player.color !== player.targetColor) {
@@ -1430,8 +2204,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // 6. Update Guards & Vision Logic
       const guards = guardsRef.current;
       let maxAlert = 0;
+      const isFrozen = timeFreezeActiveRef.current;
 
       guards.forEach(guard => {
+        // Skip guard updates if time freeze is active
+        if (isFrozen) {
+          guard.pulseTime += 0.05;
+          maxAlert = Math.max(maxAlert, guard.alertLevel);
+          return;
+        }
         guard.pulseTime += 0.05;
 
         // A. Handle guard movement / patrol pathing
@@ -1456,14 +2237,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // B. Vision Cone Detection Checks
-        const dx = player.x - guard.x;
-        const dy = player.y - guard.y;
+        // Check decoys first - they attract guard attention
+        const decoys = decoyEntitiesRef.current;
+        let targetX = player.x;
+        let targetY = player.y;
+        let isDecoyTarget = false;
+
+        for (const decoy of decoys) {
+          const distToDecoy = Math.hypot(decoy.x - guard.x, decoy.y - guard.y);
+          if (distToDecoy < guard.visionRange) {
+            const angleToDecoy = Math.atan2(decoy.y - guard.y, decoy.x - guard.x);
+            let diffAngle = angleToDecoy - guard.angle;
+            diffAngle = Math.atan2(Math.sin(diffAngle), Math.cos(diffAngle));
+            if (Math.abs(diffAngle) < guard.visionAngle / 2) {
+              targetX = decoy.x;
+              targetY = decoy.y;
+              isDecoyTarget = true;
+              break; // Found closest decoy in vision
+            }
+          }
+        }
+
+        const dx = targetX - guard.x;
+        const dy = targetY - guard.y;
         const distToPlayer = Math.hypot(dx, dy);
 
         let isInsideVision = false;
 
         if (distToPlayer < guard.visionRange) {
-          // Calculate angle from guard to player
+          // Calculate angle from guard to target
           const angleToPlayer = Math.atan2(dy, dx);
           let diffAngle = angleToPlayer - guard.angle;
           // Normalize
@@ -1475,9 +2277,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
 
         // C. Alert accumulation logic
-        if (isInsideVision) {
+        // Only check player if not decoy target
+        if (isInsideVision && !isDecoyTarget) {
           guard.state = 'suspicious';
-          
+
           // Alert rate increases.
           // If player is moving: instant detection!
           // If still, rate depends on camouflage mismatch.
@@ -1496,6 +2299,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           } else {
             // Very slowly decay alert level if they are perfectly camouflaged
             guard.alertLevel = Math.max(0, guard.alertLevel - 0.2);
+          }
+        } else if (isInsideVision && isDecoyTarget) {
+          // Guard is looking at decoy - reset alert
+          guard.alertLevel = Math.max(0, guard.alertLevel - 1.0);
+          if (guard.alertLevel === 0) {
+            guard.state = 'patrol';
           }
         } else {
           // Guard slowly calms down if player is not in sight
@@ -1534,8 +2343,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const offscreen = offscreenCanvasRef.current;
       if (offscreen) {
         ctx.drawImage(offscreen, 0, 0);
-        // If sunflowers level, draw the reveal mask on top of the masterpiece!
-        if (painting.proceduralType === 'sunflowers' && revealCanvasRef.current) {
+        // If mask level, draw the reveal mask on top of the masterpiece!
+        if (MASK_LEVELS.includes(painting.proceduralType) && revealCanvasRef.current) {
           ctx.drawImage(revealCanvasRef.current, 0, 0);
         }
       } else {
@@ -2044,6 +2853,239 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       }
 
+      // ===== UNIVERSAL POWERUP DRAWING =====
+      // Draw Time Freeze Powerup
+      const tfPowerup = timeFreezePowerupRef.current;
+      if (tfPowerup && tfPowerup.active) {
+        ctx.save();
+        ctx.translate(tfPowerup.x, tfPowerup.y);
+
+        const pulse = 1.0 + Math.sin(Date.now() * 0.008) * 0.12;
+        ctx.scale(pulse, pulse);
+
+        // Blue glow for time freeze
+        ctx.shadowColor = '#3b82f6';
+        ctx.shadowBlur = 10;
+
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.25)';
+        ctx.strokeStyle = '#3b82f6';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, tfPowerup.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        // Clock icon
+        ctx.fillStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(0, 0, 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Clock hands
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(0, -5);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, 0);
+        ctx.lineTo(3, 0);
+        ctx.stroke();
+
+        // Timer ring
+        ctx.strokeStyle = 'rgba(59, 130, 246, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, tfPowerup.radius + 3, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#3b82f6';
+        ctx.beginPath();
+        ctx.arc(0, 0, tfPowerup.radius + 3, -Math.PI / 2, -Math.PI / 2 + (tfPowerup.timeLeft / 8.0) * Math.PI * 2);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      // Draw Decoy Frog Powerup
+      const dfPowerup = decoyFrogPowerupRef.current;
+      if (dfPowerup && dfPowerup.active) {
+        ctx.save();
+        ctx.translate(dfPowerup.x, dfPowerup.y);
+
+        const pulse = 1.0 + Math.sin(Date.now() * 0.009) * 0.14;
+        ctx.scale(pulse, pulse);
+
+        // Green glow for decoy frog
+        ctx.shadowColor = '#22c55e';
+        ctx.shadowBlur = 10;
+
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.25)';
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, dfPowerup.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        // Frog icon
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(0, 2, 6, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Frog eyes
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-3, -1, 3, 0, Math.PI * 2);
+        ctx.arc(3, -1, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(-3, -1, 1.5, 0, Math.PI * 2);
+        ctx.arc(3, -1, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Timer ring
+        ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, dfPowerup.radius + 3, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(0, 0, dfPowerup.radius + 3, -Math.PI / 2, -Math.PI / 2 + (dfPowerup.timeLeft / 8.0) * Math.PI * 2);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      // Draw Palette Powerup
+      const palPowerup = palettePowerupRef.current;
+      if (palPowerup && palPowerup.active && !hasPaletteUpgrade) {
+        ctx.save();
+        ctx.translate(palPowerup.x, palPowerup.y);
+
+        const pulse = 1.0 + Math.sin(Date.now() * 0.01) * 0.12;
+        ctx.scale(pulse, pulse);
+
+        // Orange glow for palette
+        ctx.shadowColor = '#f59e0b';
+        ctx.shadowBlur = 10;
+
+        ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, palPowerup.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+
+        ctx.shadowBlur = 0;
+
+        // Palette icon - colored circles
+        const colors = ['#ef4444', '#f59e0b', '#22c55e', '#3b82f6', '#8b5cf6'];
+        colors.forEach((c, i) => {
+          const angle = (i / colors.length) * Math.PI * 2 - Math.PI / 2;
+          const r = 4;
+          ctx.fillStyle = c;
+          ctx.beginPath();
+          ctx.arc(Math.cos(angle) * r, Math.sin(angle) * r, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+        });
+
+        // Center circle
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(0, 0, 3, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Timer ring
+        ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(0, 0, palPowerup.radius + 3, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.arc(0, 0, palPowerup.radius + 3, -Math.PI / 2, -Math.PI / 2 + (palPowerup.timeLeft / 10.0) * Math.PI * 2);
+        ctx.stroke();
+
+        ctx.restore();
+      }
+
+      // Draw Decoy Entities
+      decoyEntitiesRef.current.forEach(decoy => {
+        ctx.save();
+        ctx.translate(decoy.x, decoy.y);
+
+        const pulse = 1.0 + Math.sin(decoy.pulseTime) * 0.15;
+        ctx.scale(pulse, pulse);
+
+        // Glow
+        ctx.shadowColor = decoy.color;
+        ctx.shadowBlur = 15;
+
+        // Frog body
+        ctx.fillStyle = decoy.color;
+        ctx.beginPath();
+        ctx.arc(0, 2, decoy.radius, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.shadowBlur = 0;
+
+        // Eyes
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(-5, -3, 5, 0, Math.PI * 2);
+        ctx.arc(5, -3, 5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Pupils (look around randomly)
+        const lookX = Math.sin(decoy.pulseTime * 0.7) * 2;
+        const lookY = Math.cos(decoy.pulseTime * 0.5) * 2;
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(-5 + lookX, -3 + lookY, 2.5, 0, Math.PI * 2);
+        ctx.arc(5 + lookX, -3 + lookY, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Time ring
+        ctx.strokeStyle = 'rgba(34, 197, 94, 0.4)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, decoy.radius + 4, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(0, 0, decoy.radius + 4, -Math.PI / 2, -Math.PI / 2 + (decoy.timeLeft / 5.0) * Math.PI * 2);
+        ctx.stroke();
+
+        ctx.restore();
+      });
+
+      // Draw Time Freeze Indicator
+      if (timeFreezeActiveRef.current) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(59, 130, 246, 0.15)';
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+        ctx.fillStyle = '#3b82f6';
+        ctx.font = 'bold 24px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`⏱️ ${timeFreezeTimeLeftRef.current.toFixed(1)}s`, WIDTH / 2, 60);
+        ctx.restore();
+      }
+
       // UI HUD Overlay inside the canvas:
       // Real-time Camouflage Gauge directly over player's head
       if (player.isPainted) {
@@ -2247,46 +3289,55 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         </div>
       </div>
 
-      {/* Special sunflowers explanation banner */}
-      {painting.proceduralType === 'sunflowers' && (
+      {/* Special mask level explanation banner */}
+      {MASK_LEVELS.includes(painting.proceduralType) && (
         <div className="w-full mb-4 bg-[#c5a059]/10 border border-[#c5a059]/30 text-[#c5a059] px-4 py-3 rounded-lg text-xs font-mono leading-relaxed flex items-start gap-3">
-          <span className="text-base flex-shrink-0">🌻</span>
+          <span className="text-base flex-shrink-0">{painting.proceduralType === 'sunflowers' ? '🌻' : '🎨'}</span>
           <div>
             <strong className="block text-[#c5a059] mb-0.5 uppercase tracking-wider font-bold">
-              {lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: VAN GOGH REVEAL' : '【向日葵关卡专属特殊机制：色彩复苏】'}
+              {painting.proceduralType === 'sunflowers'
+                ? (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: VAN GOGH REVEAL' : '【向日葵关卡专属特殊机制：色彩复苏】')
+                : (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: ARTWORK RESTORATION' : '【特殊机制：画作复苏】')
+              }
             </strong>
             <span>
-              {lang === 'en'
-                ? 'The masterpiece starts covered in a white canvas! Move around or press Space / F (or click) to absorb the white background and scratch it off to reveal Van Gogh\'s Sunflowers underneath. Stand on revealed colors and absorb them to remain invisible!'
-                : '向日葵画作开始时被白色画布完全遮挡！移动小人或按空格键/F键（或点击画面）可以吸走白底并揭露出向日葵原作。站在复苏的色彩上再次吸色，即可重新隐形！'}
+              {painting.proceduralType === 'sunflowers'
+                ? (lang === 'en'
+                  ? 'The masterpiece starts covered in a white canvas! Move around or press Space / F (or click) to absorb the white background and scratch it off to reveal Van Gogh\'s Sunflowers underneath. Stand on revealed colors and absorb them to remain invisible!'
+                  : '向日葵画作开始时被白色画布完全遮挡！移动小人或按空格键/F键（或点击画面）可以吸走白底并揭露出向日葵原作。站在复苏的色彩上再次吸色，即可重新隐形！')
+                : (lang === 'en'
+                  ? 'The masterpiece starts covered in a white canvas! Move around to scratch it off and reveal the artwork underneath. Collect the power-ups: ⏱️ Time Freeze, 🐸 Decoy Frog, 🎨 Palette Upgrade!'
+                  : '画作开始时被白色画布完全遮挡！移动小人擦除白底并揭示画作原作。收集道具：⏱️ 时间冻结、🐸 迷惑蛙、🎨 调色盘升级！')
+              }
             </span>
           </div>
         </div>
       )}
 
-      {/* Sunflowers Real-time HUD Status */}
-      {painting.proceduralType === 'sunflowers' && (
+      {/* Mask Level Real-time HUD Status */}
+      {MASK_LEVELS.includes(painting.proceduralType) && (
         <div className="w-full mb-4 bg-black/40 border border-white/10 rounded-xl p-4 flex flex-col gap-1.5">
           {/* Reveal rate */}
           <div className="w-full flex flex-col gap-1.5">
             <div className="flex justify-between items-center text-xs">
               <span className="font-bold tracking-wider text-[#c5a059] flex items-center gap-2">
-                🌻 {lang === 'en' ? 'REVEAL PROGRESS' : '向日葵画作复苏率'}
+                {painting.proceduralType === 'sunflowers' ? '🌻 ' : '🎨 '}
+                {lang === 'en' ? 'ARTWORK RESTORATION' : '画作复苏率'}
               </span>
               <span className="font-mono font-bold text-[#c5a059]">
-                {sunflowerRevealRate}% / 98%
+                {painting.proceduralType === 'sunflowers' ? sunflowerRevealRate : maskRevealRate}% / 98%
               </span>
             </div>
             <div className="relative w-full h-3.5 bg-white/10 rounded-full overflow-hidden border border-white/5">
               <div
                 className="h-full bg-gradient-to-r from-amber-600 to-[#c5a059] transition-all duration-300"
-                style={{ width: `${(sunflowerRevealRate / 98) * 100}%` }}
+                style={{ width: `${((painting.proceduralType === 'sunflowers' ? sunflowerRevealRate : maskRevealRate) / 98) * 100}%` }}
               />
             </div>
             <p className="text-[10px] text-white/50 italic font-sans">
               {lang === 'en'
                 ? '🎯 Reveal at least 98% of the white canvas to fully recover the masterpiece and pass!'
-                : '🎯 至少复苏 98% 的画布即可唤醒整幅向日葵神作并获得胜利！'}
+                : '🎯 至少复苏 98% 的画布即可唤醒整幅神作并获得胜利！'}
             </p>
           </div>
         </div>

@@ -850,7 +850,7 @@ export const MuseumGallery: React.FC = () => {
               <div className="grid grid-cols-2 gap-4 mb-8">
                 <div className="bg-black/60 p-4 rounded border border-white/10 text-center">
                   <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase">{TRANSLATIONS[lang].statsLevels}</span>
-                  <p className="text-2xl font-serif font-bold text-[#c5a059]">{stats.levelsCleared} / 5</p>
+                  <p className="text-2xl font-serif font-bold text-[#c5a059]">{stats.levelsCleared} / 12</p>
                 </div>
                 <div className="bg-black/60 p-4 rounded border border-white/10 text-center">
                   <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase">{TRANSLATIONS[lang].statsTime}</span>
