@@ -1,0 +1,6 @@
+{
+  "name": "艺术变色龙",
+  "description": "平面2D艺术画作躲猫猫游戏。化身白色小人进入名画世界，用画笔吸取背景颜色进行完美伪装，在巡逻警卫的探照灯下屏息隐藏！",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
