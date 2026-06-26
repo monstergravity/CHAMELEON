@@ -1,7 +1,8 @@
 import React, { useEffect, useRef } from 'react';
+import { PaintingData } from '../types';
 
 interface ProceduralArtThumbnailProps {
-  type: 'monalisa' | 'starrynight' | 'scream' | 'greatwave' | 'pearlearring' | 'sunflowers' | 'waterlilies' | 'thekiss' | 'venus' | 'liberty' | 'persistence' | 'cafeterrace';
+  type: PaintingData['proceduralType'];
   className?: string;
 }
 
@@ -825,6 +826,203 @@ export const ProceduralArtThumbnail: React.FC<ProceduralArtThumbnailProps> = ({ 
       ctx.arc(240, HEIGHT - 200, 22, 0, Math.PI, true);
       ctx.fill();
       ctx.fillRect(236, HEIGHT - 200, 8, 40);
+    } else if (type === 'earthlydelights') {
+      const grad = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      grad.addColorStop(0, '#16051f');
+      grad.addColorStop(0.5, '#0f2f35');
+      grad.addColorStop(1, '#f472b6');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.fillStyle = 'rgba(20, 184, 166, 0.75)';
+      ctx.beginPath();
+      ctx.ellipse(WIDTH * 0.48, HEIGHT * 0.64, 260, 80, -0.08, 0, Math.PI * 2);
+      ctx.fill();
+
+      const fruit = [
+        [160, 120, 42, '#f472b6'], [340, 95, 58, '#fff7ed'],
+        [510, 155, 38, '#a3e635'], [650, 105, 50, '#fb7185'],
+      ];
+      fruit.forEach(([x, y, r, color]) => {
+        ctx.fillStyle = `${color}`;
+        ctx.beginPath();
+        ctx.arc(Number(x), Number(y), Number(r), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      });
+
+      ctx.strokeStyle = '#fff7ed';
+      ctx.lineWidth = 5;
+      for (let i = 0; i < 9; i++) {
+        const x = 80 + i * 80;
+        ctx.beginPath();
+        ctx.moveTo(x, HEIGHT - 80);
+        ctx.bezierCurveTo(x + 20, 330, x - 35, 230, x + 45, 170);
+        ctx.stroke();
+      }
+    } else if (type === 'temeraire') {
+      const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      sky.addColorStop(0, '#1d4ed8');
+      sky.addColorStop(0.45, '#fb7185');
+      sky.addColorStop(0.8, '#f59e0b');
+      sky.addColorStop(1, '#111827');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.55)';
+      ctx.beginPath();
+      ctx.arc(WIDTH * 0.76, HEIGHT * 0.35, 95, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = '#111827';
+      ctx.beginPath();
+      ctx.moveTo(120, 305);
+      ctx.lineTo(520, 270);
+      ctx.lineTo(455, 345);
+      ctx.lineTo(170, 365);
+      ctx.closePath();
+      ctx.fill();
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 5;
+      for (let i = 0; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(210 + i * 70, 280);
+        ctx.lineTo(225 + i * 70, 115);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = 'rgba(229, 231, 235, 0.35)';
+      for (let y = 360; y < HEIGHT; y += 28) {
+        ctx.fillRect(0, y, WIDTH, 8);
+      }
+    } else if (type === 'grandjatte') {
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      const dotColors = ['#38bdf8', '#22c55e', '#ef4444', '#fde68a', '#f8fafc'];
+      for (let y = 22; y < HEIGHT; y += 22) {
+        for (let x = 18; x < WIDTH; x += 24) {
+          const idx = Math.floor((x * 3 + y * 5) / 22) % dotColors.length;
+          ctx.fillStyle = dotColors[idx];
+          ctx.globalAlpha = 0.45 + ((x + y) % 50) / 120;
+          ctx.beginPath();
+          ctx.arc(x, y, 4 + ((x + y) % 5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = '#111827';
+      [180, 410, 620].forEach((x, i) => {
+        ctx.beginPath();
+        ctx.arc(x, 290 - i * 15, 28, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(x - 11, 315 - i * 15, 22, 120);
+      });
+
+      ctx.strokeStyle = '#fde68a';
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.moveTo(80, 420);
+      ctx.bezierCurveTo(250, 345, 460, 455, 720, 380);
+      ctx.stroke();
+    } else if (type === 'composition8') {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.strokeStyle = '#020617';
+      ctx.lineWidth = 6;
+      for (let i = 0; i < 12; i++) {
+        ctx.beginPath();
+        ctx.moveTo(60 + i * 70, 40 + (i % 3) * 30);
+        ctx.lineTo(10 + i * 65, HEIGHT - 40 - (i % 4) * 28);
+        ctx.stroke();
+      }
+
+      const shapes = [
+        [170, 150, 70, '#ef4444'], [430, 105, 50, '#facc15'],
+        [650, 260, 80, '#2563eb'], [300, 330, 42, '#020617'],
+      ];
+      shapes.forEach(([x, y, r, color]) => {
+        ctx.fillStyle = `${color}`;
+        ctx.beginPath();
+        ctx.arc(Number(x), Number(y), Number(r), 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#020617';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+      });
+
+      ctx.fillStyle = '#14b8a6';
+      ctx.beginPath();
+      ctx.moveTo(520, 360);
+      ctx.lineTo(720, 420);
+      ctx.lineTo(630, 250);
+      ctx.closePath();
+      ctx.fill();
+    } else if (type === 'boogiewoogie') {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.fillStyle = '#020617';
+      for (let x = 70; x < WIDTH; x += 110) ctx.fillRect(x, 0, 14, HEIGHT);
+      for (let y = 56; y < HEIGHT; y += 90) ctx.fillRect(0, y, WIDTH, 14);
+
+      ctx.fillStyle = '#fde047';
+      for (let x = 0; x < WIDTH; x += 42) {
+        ctx.fillRect(x, 56, 24, 14);
+        ctx.fillRect(x + 16, 326, 24, 14);
+      }
+      for (let y = 0; y < HEIGHT; y += 42) {
+        ctx.fillRect(290, y, 14, 24);
+        ctx.fillRect(620, y + 18, 14, 24);
+      }
+
+      const blocks = [
+        [90, 110, '#dc2626'], [210, 220, '#2563eb'], [470, 140, '#dc2626'],
+        [560, 355, '#2563eb'], [700, 235, '#fde047'], [350, 395, '#dc2626'],
+      ];
+      blocks.forEach(([x, y, color]) => {
+        ctx.fillStyle = `${color}`;
+        ctx.fillRect(Number(x), Number(y), 42, 42);
+      });
+    } else if (type === 'redstudio') {
+      const grad = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      grad.addColorStop(0, '#7f1d1d');
+      grad.addColorStop(0.55, '#b91c1c');
+      grad.addColorStop(1, '#292524');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.strokeStyle = '#fecdd3';
+      ctx.lineWidth = 5;
+      const frames = [
+        [95, 80, 150, 110], [310, 55, 135, 160],
+        [545, 90, 170, 120], [180, 310, 180, 105],
+      ];
+      frames.forEach(([x, y, w, h]) => {
+        ctx.strokeRect(x, y, w, h);
+        ctx.beginPath();
+        ctx.moveTo(x + 20, y + h - 25);
+        ctx.lineTo(x + w * 0.5, y + 28);
+        ctx.lineTo(x + w - 22, y + h - 35);
+        ctx.stroke();
+      });
+
+      ctx.strokeStyle = '#1d4ed8';
+      ctx.lineWidth = 9;
+      ctx.beginPath();
+      ctx.moveTo(500, 430);
+      ctx.lineTo(690, 365);
+      ctx.lineTo(735, 450);
+      ctx.stroke();
+
+      ctx.fillStyle = '#84cc16';
+      ctx.beginPath();
+      ctx.ellipse(575, 330, 85, 24, -0.2, 0, Math.PI * 2);
+      ctx.fill();
     }
 
     ctx.restore();

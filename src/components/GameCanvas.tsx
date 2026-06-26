@@ -4,13 +4,14 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Player, Guard, ColorOrb, ExitGate, PaintingData, Position } from '../types';
+import { GameMode, GuardType, Player, Guard, ColorOrb, ExitGate, PaintingData, Position } from '../types';
 import { audio } from './AudioEngine';
 import { RotateCcw, Play, Pause, Volume2, VolumeX, Eye, HelpCircle, Award, CheckCircle } from 'lucide-react';
 
 interface GameCanvasProps {
   painting: PaintingData;
-  onLevelCleared: () => void;
+  mode?: GameMode;
+  onLevelCleared: (summary?: string) => void;
   onGameOver: (reason: string) => void;
   isMuted: boolean;
   onToggleMute: () => void;
@@ -153,22 +154,45 @@ interface DecoyEntity {
 }
 
 // Mask restoration levels. Level 7 (waterlilies) intentionally stays on the classic orb loop.
-const MASK_LEVELS = ['sunflowers', 'thekiss', 'venus', 'liberty', 'persistence', 'cafeterrace'] as const;
+const MASK_LEVELS = ['sunflowers', 'thekiss', 'venus', 'liberty', 'persistence', 'cafeterrace', 'earthlydelights', 'temeraire', 'grandjatte', 'composition8', 'boogiewoogie', 'redstudio'] as const;
 const DEFAULT_RESTORATION_TARGET_PERCENT = 98;
+const DUEL_DURATION_SECONDS = 90;
+const DUEL_TRAP_SECONDS = 0.75;
+const DUEL_RESPAWN_SECONDS = 2.0;
+const DUEL_GHOST_SECONDS = 2.0;
+const DUEL_GRID_COLUMNS = 80;
+const DUEL_GRID_ROWS = 50;
+type DuelPlayerId = 1 | 2;
+
+interface DuelPlayer extends Player {
+  id: DuelPlayerId;
+  label: string;
+  scorePixels: number;
+  deaths: number;
+  trappedTime: number;
+  eliminated: boolean;
+  respawnTimer: number;
+  ghostTime: number;
+  lastScoreAt: number;
+  trailColor: string;
+}
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   painting,
+  mode = 'solo',
   onLevelCleared,
   onGameOver,
   isMuted,
   onToggleMute,
-  lang = 'zh',
+  lang = 'en',
 }) => {
   const isRestorationLevel = MASK_LEVELS.includes(painting.proceduralType as (typeof MASK_LEVELS)[number]);
+  const isLocalDuel = mode === 'local-duel' && isRestorationLevel;
   const restorationTargetPercent = painting.restorationTargetPercent ?? DEFAULT_RESTORATION_TARGET_PERCENT;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const revealCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const ownerOverlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   
   // Game state refs (to avoid closure issues in requestAnimationFrame)
   const playerRef = useRef<Player>({
@@ -193,6 +217,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const [isExitDiscovered, setIsExitDiscovered] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [alertLevel, setAlertLevel] = useState(0); // Max among all guards for UI feedback
+  const [duelTimeLeft, setDuelTimeLeft] = useState(DUEL_DURATION_SECONDS);
+  const [duelScores, setDuelScores] = useState({ p1: 0, p2: 0 });
+  const [duelDeaths, setDuelDeaths] = useState({ p1: 0, p2: 0 });
+  const [duelMessage, setDuelMessage] = useState('');
 
   // Keyboard controls
   const keysPressed = useRef<{ [key: string]: boolean }>({});
@@ -200,6 +228,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Elements
   const guardsRef = useRef<Guard[]>([]);
   const orbsRef = useRef<ColorOrb[]>([]);
+  const duelPlayersRef = useRef<DuelPlayer[]>([]);
+  const restorationOwnerRef = useRef<Uint8Array>(new Uint8Array(WIDTH * HEIGHT));
+  const duelElapsedRef = useRef<number>(0);
   const exitGateRef = useRef<ExitGate>({
     x: WIDTH - 60,
     y: HEIGHT / 2 - 40,
@@ -235,6 +266,57 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Track if game is active
   const isGameRunning = useRef<boolean>(true);
 
+  const createDuelPlayers = (): DuelPlayer[] => ([
+    {
+      id: 1,
+      label: 'P1',
+      x: 90,
+      y: HEIGHT / 2,
+      radius: 15,
+      color: '#ffffff',
+      targetColor: '#ffffff',
+      vx: 0,
+      vy: 0,
+      isMoving: false,
+      camouflageRate: 0,
+      isPainted: false,
+      camoTimeLeft: 6.0,
+      camoMaxTime: 6.0,
+      scorePixels: 0,
+      deaths: 0,
+      trappedTime: 0,
+      eliminated: false,
+      respawnTimer: 0,
+      ghostTime: 0,
+      lastScoreAt: 0,
+      trailColor: '#fbbf24',
+    },
+    {
+      id: 2,
+      label: 'P2',
+      x: WIDTH - 90,
+      y: HEIGHT / 2,
+      radius: 15,
+      color: '#ffffff',
+      targetColor: '#ffffff',
+      vx: 0,
+      vy: 0,
+      isMoving: false,
+      camouflageRate: 0,
+      isPainted: false,
+      camoTimeLeft: 6.0,
+      camoMaxTime: 6.0,
+      scorePixels: 0,
+      deaths: 0,
+      trappedTime: 0,
+      eliminated: false,
+      respawnTimer: 0,
+      ghostTime: 0,
+      lastScoreAt: 0,
+      trailColor: '#22d3ee',
+    },
+  ]);
+
   // Reset level state
   useEffect(() => {
     isGameRunning.current = true;
@@ -243,6 +325,14 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     setIsExitOpen(false);
     setIsExitDiscovered(false);
     setAlertLevel(0);
+    setDuelTimeLeft(DUEL_DURATION_SECONDS);
+    setDuelScores({ p1: 0, p2: 0 });
+    setDuelDeaths({ p1: 0, p2: 0 });
+    setDuelMessage('');
+    duelElapsedRef.current = 0;
+    duelPlayersRef.current = createDuelPlayers();
+    restorationOwnerRef.current = new Uint8Array(WIDTH * HEIGHT);
+    ownerOverlayCanvasRef.current = null;
 
     // Initialize player
     playerRef.current = {
@@ -446,6 +536,31 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       });
     }
 
+    guards.forEach((guard, index) => {
+      const guardType = painting.guardMix?.[index] ?? 'inspector';
+      guard.type = guardType;
+      guard.abilityCooldown = 1.5 + index * 0.45;
+      guard.rotateDirection = index % 2 === 0 ? 1 : -1;
+
+      if (guardType === 'sweeper') {
+        guard.speed *= 1.16;
+        guard.visionAngle = Math.PI / 2.25;
+        guard.visionRange *= 0.82;
+      } else if (guardType === 'curator') {
+        guard.speed *= 0.94;
+        guard.visionRange *= 0.9;
+      } else if (guardType === 'drone') {
+        guard.radius = 15;
+        guard.speed *= 0.92;
+        guard.visionAngle = Math.PI / 3.8;
+        guard.visionRange *= 0.82;
+      } else if (guardType === 'sentinel') {
+        guard.speed *= 0.62;
+        guard.visionAngle = Math.PI / 7;
+        guard.visionRange *= 1.38;
+      }
+    });
+
     guardsRef.current = guards;
     particlesRef.current = [];
 
@@ -512,8 +627,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         rCtx.fillRect(0, 0, WIDTH, HEIGHT);
       }
       revealCanvasRef.current = rCanvas;
+      if (isLocalDuel) {
+        const ownerCanvas = document.createElement('canvas');
+        ownerCanvas.width = WIDTH;
+        ownerCanvas.height = HEIGHT;
+        ownerOverlayCanvasRef.current = ownerCanvas;
+      }
     } else {
       revealCanvasRef.current = null;
+      ownerOverlayCanvasRef.current = null;
     }
 
     // Instantly draw our gorgeous procedural masterpiece
@@ -522,22 +644,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Keyboard handlers
     const handleKeyDown = (e: KeyboardEvent) => {
       const k = e.key.toLowerCase();
-      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', ' ', 'f'].includes(k) || e.key === ' ') {
+      const code = e.code.toLowerCase();
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd', ' ', 'f', 'enter', 'shift'].includes(k) || e.key === ' ') {
         // Prevent browser scrolling
         if (e.key === ' ' || e.key.startsWith('Arrow')) {
           e.preventDefault();
         }
       }
       keysPressed.current[e.key.toLowerCase()] = true;
+      keysPressed.current[code] = true;
 
       // Quick hotkey to paint (Space or F)
-      if ((e.key === ' ' || k === 'f') && !e.repeat) {
-        absorbColorUnderPlayer();
+      if (!e.repeat) {
+        if (isLocalDuel) {
+          if (e.key === ' ' || k === 'f') {
+            absorbColorForDuelPlayer(1);
+          } else if (k === 'enter' || code === 'shiftright') {
+            absorbColorForDuelPlayer(2);
+          }
+        } else if (e.key === ' ' || k === 'f') {
+          absorbColorUnderPlayer();
+        }
       }
     };
 
     const handleKeyUp = (e: KeyboardEvent) => {
       keysPressed.current[e.key.toLowerCase()] = false;
+      keysPressed.current[e.code.toLowerCase()] = false;
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -548,7 +681,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       window.removeEventListener('keyup', handleKeyUp);
       isGameRunning.current = false;
     };
-  }, [painting]);
+  }, [painting, mode]);
 
   const resetCamouflageTimer = (player: Player) => {
     player.camoMaxTime = player.camoMaxTime ?? 6.0;
@@ -574,6 +707,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     spawnSplatParticles(player.x, player.y, color);
   };
 
+  const absorbColorForDuelPlayer = (id: DuelPlayerId) => {
+    if (isPaused || !isGameRunning.current || !isLocalDuel) return;
+    const player = getDuelPlayer(id);
+    if (!player || player.eliminated) return;
+
+    const color = getPixelColor(Math.round(player.x), Math.round(player.y));
+    player.targetColor = color;
+    player.isPainted = true;
+    resetCamouflageTimer(player);
+    audio.playSplat();
+    spawnSplatParticles(player.x, player.y, player.trailColor);
+  };
+
   // Helper to spawn paint splatter particles
   const spawnSplatParticles = (x: number, y: number, color: string) => {
     const particles = [];
@@ -593,29 +739,81 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     particlesRef.current = [...particlesRef.current, ...particles];
   };
 
-  // Helper to reveal sunflowers painting at coordinate
-  const revealPaintingAt = (x: number, y: number, radius: number): number => {
+  const getDuelPlayer = (id: DuelPlayerId): DuelPlayer | undefined => (
+    duelPlayersRef.current.find(player => player.id === id)
+  );
+
+  const paintOwnerOverlay = (x: number, y: number, radius: number, ownerId: DuelPlayerId) => {
+    const overlay = ownerOverlayCanvasRef.current;
+    if (!overlay) return;
+    const ctx = overlay.getContext('2d');
+    if (!ctx) return;
+
+    const color = ownerId === 1 ? 'rgba(251, 191, 36, 0.28)' : 'rgba(34, 211, 238, 0.28)';
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, radius + 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  };
+
+  // Helper to reveal painting at coordinate. In duel mode it also claims newly restored pixels.
+  const revealPaintingAt = (x: number, y: number, radius: number, ownerId?: DuelPlayerId): number => {
     const canvas = revealCanvasRef.current;
     if (!canvas) return 0;
     const ctx = canvas.getContext('2d');
     if (!ctx) return 0;
 
     let whiteCleared = 0;
+    const ownerMap = restorationOwnerRef.current;
+    const shouldClaim = ownerId !== undefined && ownerMap.length === WIDTH * HEIGHT;
+
     try {
-      // Fast sampling inside radius to check if there is white
-      const samplePoints = [
-        { dx: 0, dy: 0 },
-        { dx: -radius * 0.5, dy: -radius * 0.5 },
-        { dx: radius * 0.5, dy: -radius * 0.5 },
-        { dx: -radius * 0.5, dy: radius * 0.5 },
-        { dx: radius * 0.5, dy: radius * 0.5 },
-      ];
-      for (const p of samplePoints) {
-        const sx = Math.max(0, Math.min(WIDTH - 1, Math.round(x + p.dx)));
-        const sy = Math.max(0, Math.min(HEIGHT - 1, Math.round(y + p.dy)));
-        const pixel = ctx.getImageData(sx, sy, 1, 1).data;
-        if (pixel[3] > 10) {
-          whiteCleared++;
+      if (shouldClaim) {
+        const left = Math.max(0, Math.floor(x - radius));
+        const top = Math.max(0, Math.floor(y - radius));
+        const right = Math.min(WIDTH - 1, Math.ceil(x + radius));
+        const bottom = Math.min(HEIGHT - 1, Math.ceil(y + radius));
+        const boxWidth = right - left + 1;
+        const boxHeight = bottom - top + 1;
+        const imageData = ctx.getImageData(left, top, boxWidth, boxHeight);
+        const data = imageData.data;
+        const radiusSq = radius * radius;
+
+        for (let py = top; py <= bottom; py++) {
+          for (let px = left; px <= right; px++) {
+            const dx = px - x;
+            const dy = py - y;
+            if (dx * dx + dy * dy > radiusSq) continue;
+            const localIdx = ((py - top) * boxWidth + (px - left)) * 4;
+            const ownerIdx = py * WIDTH + px;
+            if (data[localIdx + 3] > 10 && ownerMap[ownerIdx] === 0) {
+              ownerMap[ownerIdx] = ownerId;
+              whiteCleared++;
+            }
+          }
+        }
+        if (whiteCleared > 0) {
+          paintOwnerOverlay(x, y, radius, ownerId);
+        }
+      } else {
+        // Fast sampling inside radius to check if there is white
+        const samplePoints = [
+          { dx: 0, dy: 0 },
+          { dx: -radius * 0.5, dy: -radius * 0.5 },
+          { dx: radius * 0.5, dy: -radius * 0.5 },
+          { dx: -radius * 0.5, dy: radius * 0.5 },
+          { dx: radius * 0.5, dy: radius * 0.5 },
+        ];
+        for (const p of samplePoints) {
+          const sx = Math.max(0, Math.min(WIDTH - 1, Math.round(x + p.dx)));
+          const sy = Math.max(0, Math.min(HEIGHT - 1, Math.round(y + p.dy)));
+          const pixel = ctx.getImageData(sx, sy, 1, 1).data;
+          if (pixel[3] > 10) {
+            whiteCleared++;
+          }
         }
       }
     } catch (e) {
@@ -628,6 +826,50 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     ctx.fill();
 
     return whiteCleared;
+  };
+
+  const eraseRestorationAt = (x: number, y: number, radius: number) => {
+    const canvas = revealCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    const ownerMap = restorationOwnerRef.current;
+    if (ownerMap.length === WIDTH * HEIGHT) {
+      const left = Math.max(0, Math.floor(x - radius));
+      const top = Math.max(0, Math.floor(y - radius));
+      const right = Math.min(WIDTH - 1, Math.ceil(x + radius));
+      const bottom = Math.min(HEIGHT - 1, Math.ceil(y + radius));
+      const radiusSq = radius * radius;
+      for (let py = top; py <= bottom; py++) {
+        for (let px = left; px <= right; px++) {
+          const dx = px - x;
+          const dy = py - y;
+          if (dx * dx + dy * dy <= radiusSq) {
+            ownerMap[py * WIDTH + px] = 0;
+          }
+        }
+      }
+    }
+
+    const overlay = ownerOverlayCanvasRef.current;
+    const overlayCtx = overlay?.getContext('2d');
+    if (overlayCtx) {
+      overlayCtx.save();
+      overlayCtx.globalCompositeOperation = 'destination-out';
+      overlayCtx.beginPath();
+      overlayCtx.arc(x, y, radius + 4, 0, Math.PI * 2);
+      overlayCtx.fill();
+      overlayCtx.restore();
+    }
   };
 
   // Helper to get pixel color from offscreen canvas
@@ -730,6 +972,81 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     ];
 
     return samples.some(point => isRestoredPixel(x + point.dx, y + point.dy));
+  };
+
+  const getOwnerAt = (x: number, y: number): number => {
+    const cx = Math.max(0, Math.min(WIDTH - 1, Math.round(x)));
+    const cy = Math.max(0, Math.min(HEIGHT - 1, Math.round(y)));
+    return restorationOwnerRef.current[cy * WIDTH + cx] ?? 0;
+  };
+
+  const wouldDuelPlayerEnterOpponentArea = (player: DuelPlayer, x: number, y: number, radius: number): boolean => {
+    if (!isLocalDuel || player.ghostTime > 0) return false;
+    const opponentId = player.id === 1 ? 2 : 1;
+    const sampleRadius = Math.max(7, radius * 0.82);
+    const samples = [
+      { dx: 0, dy: 0 },
+      { dx: sampleRadius, dy: 0 },
+      { dx: -sampleRadius, dy: 0 },
+      { dx: 0, dy: sampleRadius },
+      { dx: 0, dy: -sampleRadius },
+      { dx: sampleRadius * 0.7, dy: sampleRadius * 0.7 },
+      { dx: -sampleRadius * 0.7, dy: sampleRadius * 0.7 },
+      { dx: sampleRadius * 0.7, dy: -sampleRadius * 0.7 },
+      { dx: -sampleRadius * 0.7, dy: -sampleRadius * 0.7 },
+    ];
+
+    return samples.some(point => getOwnerAt(x + point.dx, y + point.dy) === opponentId);
+  };
+
+  const calculateOwnerCounts = () => {
+    const ownerMap = restorationOwnerRef.current;
+    let p1 = 0;
+    let p2 = 0;
+    for (let i = 0; i < ownerMap.length; i += 4) {
+      if (ownerMap[i] === 1) p1 += 4;
+      else if (ownerMap[i] === 2) p2 += 4;
+    }
+    return { p1, p2 };
+  };
+
+  const cellBlockedForPlayer = (cellX: number, cellY: number, playerId: DuelPlayerId): boolean => {
+    const opponentId = playerId === 1 ? 2 : 1;
+    const sampleX = (cellX + 0.5) * (WIDTH / DUEL_GRID_COLUMNS);
+    const sampleY = (cellY + 0.5) * (HEIGHT / DUEL_GRID_ROWS);
+    return getOwnerAt(sampleX, sampleY) === opponentId;
+  };
+
+  const hasDuelEscapePath = (player: DuelPlayer): boolean => {
+    if (!isLocalDuel || player.ghostTime > 0 || player.eliminated) return true;
+
+    const startX = Math.max(0, Math.min(DUEL_GRID_COLUMNS - 1, Math.floor(player.x / (WIDTH / DUEL_GRID_COLUMNS))));
+    const startY = Math.max(0, Math.min(DUEL_GRID_ROWS - 1, Math.floor(player.y / (HEIGHT / DUEL_GRID_ROWS))));
+    if (cellBlockedForPlayer(startX, startY, player.id)) return false;
+
+    const visited = new Uint8Array(DUEL_GRID_COLUMNS * DUEL_GRID_ROWS);
+    const queue: Array<[number, number]> = [[startX, startY]];
+    visited[startY * DUEL_GRID_COLUMNS + startX] = 1;
+
+    for (let i = 0; i < queue.length; i++) {
+      const [cx, cy] = queue[i];
+      if (cx === 0 || cy === 0 || cx === DUEL_GRID_COLUMNS - 1 || cy === DUEL_GRID_ROWS - 1) {
+        return true;
+      }
+
+      const neighbors = [
+        [cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1],
+      ];
+      for (const [nx, ny] of neighbors) {
+        if (nx < 0 || ny < 0 || nx >= DUEL_GRID_COLUMNS || ny >= DUEL_GRID_ROWS) continue;
+        const idx = ny * DUEL_GRID_COLUMNS + nx;
+        if (visited[idx] || cellBlockedForPlayer(nx, ny, player.id)) continue;
+        visited[idx] = 1;
+        queue.push([nx, ny]);
+      }
+    }
+
+    return false;
   };
 
   // Hex conversion helpers
@@ -1810,7 +2127,593 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.arc(pos.x, pos.y - 20, 12, 0, Math.PI * 2); // Head
         ctx.fill();
       });
+    } else if (type === 'earthlydelights') {
+      const grad = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      grad.addColorStop(0, '#12041d');
+      grad.addColorStop(0.36, '#0f2f35');
+      grad.addColorStop(0.72, '#3b0f35');
+      grad.addColorStop(1, '#f472b6');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.fillStyle = 'rgba(20, 184, 166, 0.65)';
+      ctx.beginPath();
+      ctx.ellipse(WIDTH * 0.5, HEIGHT * 0.65, 420, 130, -0.08, 0, Math.PI * 2);
+      ctx.fill();
+
+      const fruit = [
+        { x: 180, y: 150, r: 58, c: '#f472b6' },
+        { x: 390, y: 105, r: 72, c: '#fff7ed' },
+        { x: 620, y: 185, r: 54, c: '#a3e635' },
+        { x: 850, y: 120, r: 66, c: '#fb7185' },
+        { x: 510, y: 330, r: 42, c: '#14b8a6' },
+      ];
+      fruit.forEach(item => {
+        const fruitGrad = ctx.createRadialGradient(item.x - item.r * 0.35, item.y - item.r * 0.35, 3, item.x, item.y, item.r);
+        fruitGrad.addColorStop(0, '#ffffff');
+        fruitGrad.addColorStop(0.28, item.c);
+        fruitGrad.addColorStop(1, '#1e1033');
+        ctx.fillStyle = fruitGrad;
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, item.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#0f172a';
+        ctx.lineWidth = 6;
+        ctx.stroke();
+      });
+
+      ctx.strokeStyle = 'rgba(255, 247, 237, 0.76)';
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 12; i++) {
+        const x = 80 + i * 88;
+        ctx.beginPath();
+        ctx.moveTo(x, HEIGHT - 95);
+        ctx.bezierCurveTo(x + 45, 500, x - 70, 330, x + 55, 210);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.68)';
+      for (let i = 0; i < 16; i++) {
+        ctx.beginPath();
+        ctx.moveTo(70 + i * 70, 500 + (i % 3) * 20);
+        ctx.lineTo(95 + i * 70, 410 - (i % 4) * 18);
+        ctx.lineTo(125 + i * 70, 500 + (i % 2) * 24);
+        ctx.closePath();
+        ctx.fill();
+      }
+    } else if (type === 'temeraire') {
+      const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+      sky.addColorStop(0, '#1d4ed8');
+      sky.addColorStop(0.38, '#fb7185');
+      sky.addColorStop(0.68, '#f59e0b');
+      sky.addColorStop(1, '#111827');
+      ctx.fillStyle = sky;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.fillStyle = 'rgba(245, 158, 11, 0.5)';
+      ctx.beginPath();
+      ctx.arc(WIDTH * 0.75, HEIGHT * 0.34, 145, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(229, 231, 235, 0.2)';
+      for (let y = 390; y < HEIGHT; y += 34) {
+        ctx.fillRect(0, y, WIDTH, 9);
+      }
+
+      ctx.fillStyle = '#111827';
+      ctx.beginPath();
+      ctx.moveTo(135, 425);
+      ctx.lineTo(710, 360);
+      ctx.lineTo(625, 475);
+      ctx.lineTo(210, 512);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#e5e7eb';
+      ctx.lineWidth = 8;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 5; i++) {
+        const x = 250 + i * 90;
+        ctx.beginPath();
+        ctx.moveTo(x, 380);
+        ctx.lineTo(x + 15, 160);
+        ctx.stroke();
+      }
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = 4;
+      for (let i = 0; i < 8; i++) {
+        ctx.beginPath();
+        ctx.moveTo(120, 500 + i * 16);
+        ctx.bezierCurveTo(360, 455 + i * 10, 720, 550 - i * 8, 1040, 490 + i * 14);
+        ctx.stroke();
+      }
+    } else if (type === 'grandjatte') {
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      const dotColors = ['#38bdf8', '#22c55e', '#ef4444', '#fde68a', '#f8fafc', '#f472b6'];
+      for (let y = 18; y < HEIGHT; y += 18) {
+        for (let x = 16; x < WIDTH; x += 20) {
+          const idx = Math.floor((x * 3 + y * 7) / 20) % dotColors.length;
+          ctx.globalAlpha = 0.35 + ((x + y) % 60) / 120;
+          ctx.fillStyle = dotColors[idx];
+          ctx.beginPath();
+          ctx.arc(x, y, 3 + ((x + y) % 5), 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = '#111827';
+      const figures = [
+        { x: 205, y: 390, h: 185 },
+        { x: 460, y: 355, h: 230 },
+        { x: 735, y: 380, h: 190 },
+        { x: 910, y: 420, h: 140 },
+      ];
+      figures.forEach((figure, index) => {
+        ctx.beginPath();
+        ctx.arc(figure.x, figure.y - figure.h * 0.45, 30 + index * 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(figure.x - 13, figure.y - figure.h * 0.35, 26, figure.h);
+      });
+
+      ctx.strokeStyle = '#fde68a';
+      ctx.lineWidth = 10;
+      ctx.beginPath();
+      ctx.moveTo(80, 560);
+      ctx.bezierCurveTo(320, 450, 660, 610, 1030, 470);
+      ctx.stroke();
+    } else if (type === 'composition8') {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.strokeStyle = '#020617';
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      for (let i = 0; i < 18; i++) {
+        ctx.beginPath();
+        ctx.moveTo(40 + i * 72, 35 + (i % 5) * 32);
+        ctx.lineTo(20 + i * 62, HEIGHT - 45 - (i % 6) * 34);
+        ctx.stroke();
+      }
+
+      const circles = [
+        { x: 220, y: 210, r: 92, c: '#ef4444' },
+        { x: 560, y: 160, r: 62, c: '#facc15' },
+        { x: 870, y: 355, r: 110, c: '#2563eb' },
+        { x: 420, y: 455, r: 55, c: '#020617' },
+      ];
+      circles.forEach(item => {
+        ctx.fillStyle = item.c;
+        ctx.beginPath();
+        ctx.arc(item.x, item.y, item.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#020617';
+        ctx.lineWidth = 5;
+        ctx.stroke();
+      });
+
+      ctx.fillStyle = '#14b8a6';
+      ctx.beginPath();
+      ctx.moveTo(700, 520);
+      ctx.lineTo(1010, 590);
+      ctx.lineTo(870, 310);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 5;
+      for (let i = 0; i < 5; i++) {
+        ctx.beginPath();
+        ctx.arc(520, 350, 60 + i * 35, 0.25, Math.PI * 1.55);
+        ctx.stroke();
+      }
+    } else if (type === 'boogiewoogie') {
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.fillStyle = '#020617';
+      for (let x = 95; x < WIDTH; x += 135) ctx.fillRect(x, 0, 18, HEIGHT);
+      for (let y = 78; y < HEIGHT; y += 112) ctx.fillRect(0, y, WIDTH, 18);
+
+      ctx.fillStyle = '#fde047';
+      for (let x = 0; x < WIDTH; x += 44) {
+        ctx.fillRect(x, 78, 24, 18);
+        ctx.fillRect(x + 20, 414, 24, 18);
+      }
+      for (let y = 0; y < HEIGHT; y += 44) {
+        ctx.fillRect(365, y, 18, 24);
+        ctx.fillRect(770, y + 20, 18, 24);
+      }
+
+      const blocks = [
+        { x: 120, y: 155, c: '#dc2626' }, { x: 285, y: 288, c: '#2563eb' },
+        { x: 620, y: 160, c: '#dc2626' }, { x: 735, y: 500, c: '#2563eb' },
+        { x: 925, y: 320, c: '#fde047' }, { x: 445, y: 560, c: '#dc2626' },
+        { x: 1000, y: 90, c: '#2563eb' },
+      ];
+      blocks.forEach(block => {
+        ctx.fillStyle = block.c;
+        ctx.fillRect(block.x, block.y, 56, 56);
+      });
+    } else if (type === 'redstudio') {
+      const grad = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      grad.addColorStop(0, '#7f1d1d');
+      grad.addColorStop(0.55, '#b91c1c');
+      grad.addColorStop(1, '#292524');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      ctx.strokeStyle = '#fecdd3';
+      ctx.lineWidth = 7;
+      const frames = [
+        { x: 95, y: 90, w: 190, h: 150 },
+        { x: 390, y: 70, w: 170, h: 215 },
+        { x: 690, y: 105, w: 230, h: 155 },
+        { x: 220, y: 430, w: 250, h: 135 },
+        { x: 715, y: 430, w: 180, h: 145 },
+      ];
+      frames.forEach(frame => {
+        ctx.strokeRect(frame.x, frame.y, frame.w, frame.h);
+        ctx.beginPath();
+        ctx.moveTo(frame.x + 25, frame.y + frame.h - 30);
+        ctx.lineTo(frame.x + frame.w * 0.5, frame.y + 35);
+        ctx.lineTo(frame.x + frame.w - 28, frame.y + frame.h - 42);
+        ctx.stroke();
+      });
+
+      ctx.strokeStyle = '#1d4ed8';
+      ctx.lineWidth = 12;
+      ctx.beginPath();
+      ctx.moveTo(610, 555);
+      ctx.lineTo(870, 470);
+      ctx.lineTo(940, 585);
+      ctx.stroke();
+
+      ctx.fillStyle = '#84cc16';
+      ctx.beginPath();
+      ctx.ellipse(610, 390, 120, 32, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = '#292524';
+      ctx.lineWidth = 5;
+      for (let i = 0; i < 12; i++) {
+        ctx.beginPath();
+        ctx.moveTo(50 + i * 90, HEIGHT);
+        ctx.lineTo(120 + i * 76, 310);
+        ctx.stroke();
+      }
     }
+  };
+
+  const getDuelMovement = (playerId: DuelPlayerId) => {
+    let dx = 0;
+    let dy = 0;
+    if (playerId === 1) {
+      if (keysPressed.current['w']) dy -= 1;
+      if (keysPressed.current['s']) dy += 1;
+      if (keysPressed.current['a']) dx -= 1;
+      if (keysPressed.current['d']) dx += 1;
+    } else {
+      if (keysPressed.current['arrowup']) dy -= 1;
+      if (keysPressed.current['arrowdown']) dy += 1;
+      if (keysPressed.current['arrowleft']) dx -= 1;
+      if (keysPressed.current['arrowright']) dx += 1;
+    }
+    if (dx !== 0 && dy !== 0) {
+      dx *= 0.7071;
+      dy *= 0.7071;
+    }
+    return { dx, dy };
+  };
+
+  const syncDuelScores = () => {
+    const counts = calculateOwnerCounts();
+    const p1 = getDuelPlayer(1);
+    const p2 = getDuelPlayer(2);
+    if (p1) p1.scorePixels = counts.p1;
+    if (p2) p2.scorePixels = counts.p2;
+    setDuelScores(counts);
+    setDuelDeaths({
+      p1: p1?.deaths ?? 0,
+      p2: p2?.deaths ?? 0,
+    });
+  };
+
+  const findSafeDuelSpawn = (player: DuelPlayer): Position => {
+    const fixedSpawns: Position[] = [
+      { x: 90, y: HEIGHT / 2 },
+      { x: WIDTH - 90, y: HEIGHT / 2 },
+      { x: WIDTH / 2, y: 90 },
+      { x: WIDTH / 2, y: HEIGHT - 90 },
+      { x: 150, y: 120 },
+      { x: WIDTH - 150, y: HEIGHT - 120 },
+    ];
+
+    const candidates = [...fixedSpawns];
+    for (let i = 0; i < 18; i++) {
+      candidates.push({
+        x: 80 + Math.random() * (WIDTH - 160),
+        y: 80 + Math.random() * (HEIGHT - 160),
+      });
+    }
+
+    const other = duelPlayersRef.current.find(p => p.id !== player.id && !p.eliminated);
+    const guards = guardsRef.current;
+    const candidate = candidates.find(point => {
+      if (wouldDuelPlayerEnterOpponentArea(player, point.x, point.y, player.radius + 8)) return false;
+      if (other && Math.hypot(other.x - point.x, other.y - point.y) < 180) return false;
+      if (guards.some(guard => Math.hypot(guard.x - point.x, guard.y - point.y) < 130)) return false;
+      return true;
+    });
+
+    return candidate ?? fixedSpawns[player.id - 1];
+  };
+
+  const eliminateDuelPlayer = (player: DuelPlayer, reason: 'trap' | 'guard') => {
+    if (player.eliminated) return;
+    player.eliminated = true;
+    player.respawnTimer = DUEL_RESPAWN_SECONDS;
+    player.ghostTime = 0;
+    player.trappedTime = 0;
+    player.vx = 0;
+    player.vy = 0;
+    player.isMoving = false;
+    player.deaths += 1;
+    const message = lang === 'en'
+      ? `${player.label} vanished by ${reason === 'trap' ? 'paint enclosure' : 'guard scan'}`
+      : `${player.label} ${reason === 'trap' ? '被复苏屏障围困消失' : '被巡逻兵扫描消失'}`;
+    setDuelMessage(message);
+    setDuelDeaths({
+      p1: getDuelPlayer(1)?.deaths ?? 0,
+      p2: getDuelPlayer(2)?.deaths ?? 0,
+    });
+    spawnSplatParticles(player.x, player.y, player.trailColor);
+    audio.playSpotted();
+  };
+
+  const respawnDuelPlayer = (player: DuelPlayer) => {
+    const spawn = findSafeDuelSpawn(player);
+    player.x = spawn.x;
+    player.y = spawn.y;
+    player.color = '#ffffff';
+    player.targetColor = '#ffffff';
+    player.isPainted = false;
+    player.camoTimeLeft = 0;
+    player.eliminated = false;
+    player.respawnTimer = 0;
+    player.ghostTime = DUEL_GHOST_SECONDS;
+    player.trappedTime = 0;
+    setDuelMessage(lang === 'en' ? `${player.label} respawned` : `${player.label} 已随机复活`);
+    spawnSplatParticles(player.x, player.y, player.trailColor);
+  };
+
+  const updateDuelPlayerCamouflage = (player: DuelPlayer) => {
+    const bgHexColor = getPixelColor(Math.round(player.x), Math.round(player.y));
+    let camRate = 0.05;
+
+    if (player.isPainted) {
+      const c1 = hexToRgb(player.color);
+      const c2 = hexToRgb(bgHexColor);
+      const dist = Math.sqrt(
+        Math.pow(c1.r - c2.r, 2) +
+        Math.pow(c1.g - c2.g, 2) +
+        Math.pow(c1.b - c2.b, 2)
+      );
+
+      if (dist <= 40) {
+        camRate = 1.0;
+      } else if (dist >= 210) {
+        camRate = 0.0;
+      } else {
+        camRate = 1.0 - (dist - 40) / (210 - 40);
+      }
+
+      player.camoTimeLeft = (player.camoTimeLeft ?? 6.0) - 1 / 60;
+      if (player.camoTimeLeft <= 0) {
+        player.isPainted = false;
+        player.camoTimeLeft = 0;
+        player.targetColor = '#ffffff';
+      }
+    }
+
+    player.camouflageRate = player.isMoving ? Math.min(0.15, camRate) : camRate;
+  };
+
+  const finishDuel = (trigger: 'time' | 'restored') => {
+    if (!isGameRunning.current) return;
+    syncDuelScores();
+    const p1 = getDuelPlayer(1);
+    const p2 = getDuelPlayer(2);
+    if (!p1 || !p2) return;
+
+    const p1Pct = (p1.scorePixels / (WIDTH * HEIGHT)) * 100;
+    const p2Pct = (p2.scorePixels / (WIDTH * HEIGHT)) * 100;
+    let winner = 'DRAW';
+    if (p1.scorePixels !== p2.scorePixels) {
+      winner = p1.scorePixels > p2.scorePixels ? 'P1' : 'P2';
+    } else if (p1.deaths !== p2.deaths) {
+      winner = p1.deaths < p2.deaths ? 'P1' : 'P2';
+    } else if (p1.lastScoreAt !== p2.lastScoreAt) {
+      winner = p1.lastScoreAt > p2.lastScoreAt ? 'P1' : 'P2';
+    }
+
+    const summary = lang === 'en'
+      ? `Local Duel ${trigger === 'restored' ? 'ended by restoration target' : 'ended by timer'}: ${winner === 'DRAW' ? 'draw' : `${winner} wins`} | P1 ${p1Pct.toFixed(1)}% (${p1.deaths} KO) vs P2 ${p2Pct.toFixed(1)}% (${p2.deaths} KO).`
+      : `本地双人${trigger === 'restored' ? '达到复苏目标提前结算' : '计时结束'}：${winner === 'DRAW' ? '平局' : `${winner} 获胜`} | P1 ${p1Pct.toFixed(1)}%（${p1.deaths}次消失） vs P2 ${p2Pct.toFixed(1)}%（${p2.deaths}次消失）。`;
+
+    isGameRunning.current = false;
+    audio.playWin();
+    onLevelCleared(summary);
+  };
+
+  const updateDuelGuardLogic = (guard: Guard) => {
+    guard.pulseTime += 0.05;
+
+    const target = guard.patrolPoints[guard.currentPointIndex];
+    const distToTarget = Math.hypot(target.x - guard.x, target.y - guard.y);
+    if (distToTarget < 6) {
+      guard.currentPointIndex = (guard.currentPointIndex + 1) % guard.patrolPoints.length;
+    } else {
+      const angleToTarget = Math.atan2(target.y - guard.y, target.x - guard.x);
+      let angleDiff = angleToTarget - guard.angle;
+      angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
+      const nextAngle = guard.angle + angleDiff * (guard.type === 'drone' ? 0.08 : 0.15);
+      const nextX = guard.x + Math.cos(nextAngle) * guard.speed;
+      const nextY = guard.y + Math.sin(nextAngle) * guard.speed;
+
+      if (guard.type !== 'drone' && wouldGuardEnterRestoredArea(nextX, nextY, guard.radius)) {
+        guard.currentPointIndex = (guard.currentPointIndex + 1) % guard.patrolPoints.length;
+        guard.angle = Math.atan2(Math.sin(guard.angle + Math.PI * 0.75), Math.cos(guard.angle + Math.PI * 0.75));
+      } else {
+        guard.angle = nextAngle;
+        guard.x = nextX;
+        guard.y = nextY;
+      }
+    }
+
+    if (guard.type === 'sentinel') {
+      guard.angle += (guard.rotateDirection ?? 1) * 0.028;
+    }
+
+    if (guard.type === 'curator') {
+      guard.abilityCooldown = (guard.abilityCooldown ?? 0) - 1 / 60;
+      if (guard.abilityCooldown <= 0) {
+        const eraseX = guard.x + Math.cos(guard.angle) * 34;
+        const eraseY = guard.y + Math.sin(guard.angle) * 34;
+        eraseRestorationAt(eraseX, eraseY, 34);
+        spawnSplatParticles(eraseX, eraseY, '#f8fafc');
+        guard.abilityCooldown = 3.6;
+      }
+    }
+
+    let seenPlayer: DuelPlayer | null = null;
+    let closestDistance = Infinity;
+    duelPlayersRef.current.forEach(player => {
+      if (player.eliminated || player.ghostTime > 0) return;
+      const dx = player.x - guard.x;
+      const dy = player.y - guard.y;
+      const distToPlayer = Math.hypot(dx, dy);
+      if (distToPlayer >= guard.visionRange || distToPlayer >= closestDistance) return;
+      const angleToPlayer = Math.atan2(dy, dx);
+      let diffAngle = angleToPlayer - guard.angle;
+      diffAngle = Math.atan2(Math.sin(diffAngle), Math.cos(diffAngle));
+      if (Math.abs(diffAngle) < guard.visionAngle / 2) {
+        seenPlayer = player;
+        closestDistance = distToPlayer;
+      }
+    });
+
+    if (seenPlayer) {
+      guard.state = 'suspicious';
+      const targetPlayer = seenPlayer;
+      const camoGap = Math.max(0, 0.85 - targetPlayer.camouflageRate);
+      const alertDelta = targetPlayer.isMoving ? 4.6 : camoGap * 2.4;
+      if (alertDelta > 0) {
+        guard.alertLevel = Math.min(100, guard.alertLevel + alertDelta);
+        audio.playAlert(guard.alertLevel / 100);
+      } else {
+        guard.alertLevel = Math.max(0, guard.alertLevel - 0.3);
+      }
+
+      if (guard.alertLevel >= 100) {
+        eliminateDuelPlayer(targetPlayer, 'guard');
+        guard.alertLevel = 0;
+        guard.state = 'patrol';
+      }
+    } else {
+      guard.alertLevel = Math.max(0, guard.alertLevel - 0.8);
+      if (guard.alertLevel === 0) guard.state = 'patrol';
+    }
+
+    if (guard.alertLevel > 80) {
+      guard.state = 'alert';
+    }
+  };
+
+  const updateDuelGame = () => {
+    duelElapsedRef.current += 1 / 60;
+    const remaining = Math.max(0, DUEL_DURATION_SECONDS - duelElapsedRef.current);
+    if (frameCountRef.current % 15 === 0) {
+      setDuelTimeLeft(Math.ceil(remaining));
+    }
+    if (remaining <= 0) {
+      finishDuel('time');
+      return;
+    }
+
+    duelPlayersRef.current.forEach(player => {
+      if (player.eliminated) {
+        player.respawnTimer -= 1 / 60;
+        if (player.respawnTimer <= 0) {
+          respawnDuelPlayer(player);
+        }
+        return;
+      }
+
+      if (player.ghostTime > 0) {
+        player.ghostTime = Math.max(0, player.ghostTime - 1 / 60);
+      }
+
+      const { dx, dy } = getDuelMovement(player.id);
+      const speed = player.ghostTime > 0 ? 4.5 : 4.0;
+      player.vx = dx * speed;
+      player.vy = dy * speed;
+      player.isMoving = dx !== 0 || dy !== 0;
+
+      const nextX = Math.max(player.radius, Math.min(WIDTH - player.radius, player.x + player.vx));
+      const nextY = Math.max(player.radius, Math.min(HEIGHT - player.radius, player.y + player.vy));
+      if (!wouldDuelPlayerEnterOpponentArea(player, nextX, nextY, player.radius)) {
+        player.x = nextX;
+        player.y = nextY;
+      } else {
+        player.vx = 0;
+        player.vy = 0;
+        player.isMoving = false;
+      }
+
+      if (player.color !== player.targetColor) {
+        player.color = lerpColor(player.color, player.targetColor, 0.12);
+      }
+      updateDuelPlayerCamouflage(player);
+
+      if (player.ghostTime <= 0) {
+        const gained = revealPaintingAt(player.x, player.y, player.radius + 7, player.id);
+        if (gained > 0) {
+          player.lastScoreAt = duelElapsedRef.current;
+        }
+
+        if (hasDuelEscapePath(player)) {
+          player.trappedTime = 0;
+        } else {
+          player.trappedTime += 1 / 60;
+          if (player.trappedTime >= DUEL_TRAP_SECONDS) {
+            eliminateDuelPlayer(player, 'trap');
+          }
+        }
+      }
+    });
+
+    frameCountRef.current++;
+    if (frameCountRef.current % 10 === 0) {
+      const pct = 100 - getWhiteMaskPercentage();
+      restorationRateRef.current = pct;
+      setMaskRevealRate(Math.min(100, Math.round(pct)));
+      syncDuelScores();
+      if (pct >= restorationTargetPercent) {
+        finishDuel('restored');
+        return;
+      }
+    }
+
+    let maxAlert = 0;
+    guardsRef.current.forEach(guard => {
+      updateDuelGuardLogic(guard);
+      maxAlert = Math.max(maxAlert, guard.alertLevel);
+    });
+    setAlertLevel(Math.round(maxAlert));
   };
 
   // Live game loop
@@ -1823,6 +2726,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
     const updateGame = () => {
       if (isPaused || !isGameRunning.current) return;
+
+      if (isLocalDuel) {
+        updateDuelGame();
+        return;
+      }
 
       const player = playerRef.current;
 
@@ -2293,13 +3201,28 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           const nextX = guard.x + Math.cos(nextAngle) * guard.speed;
           const nextY = guard.y + Math.sin(nextAngle) * guard.speed;
 
-          if (wouldGuardEnterRestoredArea(nextX, nextY, guard.radius)) {
+          if (guard.type !== 'drone' && wouldGuardEnterRestoredArea(nextX, nextY, guard.radius)) {
             guard.currentPointIndex = (guard.currentPointIndex + 1) % guard.patrolPoints.length;
             guard.angle = Math.atan2(Math.sin(guard.angle + Math.PI * 0.75), Math.cos(guard.angle + Math.PI * 0.75));
           } else {
             guard.angle = nextAngle;
             guard.x = nextX;
             guard.y = nextY;
+          }
+        }
+
+        if (guard.type === 'sentinel') {
+          guard.angle += (guard.rotateDirection ?? 1) * 0.028;
+        }
+
+        if (guard.type === 'curator') {
+          guard.abilityCooldown = (guard.abilityCooldown ?? 0) - 1 / 60;
+          if (guard.abilityCooldown <= 0) {
+            const eraseX = guard.x + Math.cos(guard.angle) * 34;
+            const eraseY = guard.y + Math.sin(guard.angle) * 34;
+            eraseRestorationAt(eraseX, eraseY, 34);
+            spawnSplatParticles(eraseX, eraseY, '#f8fafc');
+            guard.abilityCooldown = 3.6;
           }
         }
 
@@ -2414,6 +3337,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (isRestorationLevel && revealCanvasRef.current) {
           ctx.drawImage(revealCanvasRef.current, 0, 0);
         }
+        if (isLocalDuel && ownerOverlayCanvasRef.current) {
+          ctx.save();
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.drawImage(ownerOverlayCanvasRef.current, 0, 0);
+          ctx.restore();
+        }
       } else {
         ctx.fillStyle = '#1e1e24';
         ctx.fillRect(0, 0, WIDTH, HEIGHT);
@@ -2423,8 +3352,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       const gate = exitGateRef.current;
       const currentRestorationPct = Math.min(100, Math.round(restorationRateRef.current));
       const restorationStatusText = lang === 'en'
-        ? `Restore artwork: ${currentRestorationPct}% / ${restorationTargetPercent}%`
-        : `画作复苏：${currentRestorationPct}% / ${restorationTargetPercent}%`;
+        ? `${isLocalDuel ? 'Duel restoration' : 'Restore artwork'}: ${currentRestorationPct}% / ${restorationTargetPercent}%`
+        : `${isLocalDuel ? '双人复苏' : '画作复苏'}：${currentRestorationPct}% / ${restorationTargetPercent}%`;
       const lockedObjectiveText = isRestorationLevel
         ? `${CANVAS_TRANSLATIONS[lang].restoreArtwork} ${restorationTargetPercent}%`
         : CANVAS_TRANSLATIONS[lang].collect3Orbs;
@@ -2492,7 +3421,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.font = 'bold 22px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(isRestorationLevel ? CANVAS_TRANSLATIONS[lang].exploreGuideRestore : CANVAS_TRANSLATIONS[lang].exploreGuide, WIDTH / 2, 15 + 48 / 2);
+        ctx.fillText(
+          isLocalDuel
+            ? (lang === 'en' ? '⚔️ Local Duel: restore more canvas, trap your rival, 90 seconds!' : '⚔️ 本地双人：复苏更多画布，围困对手，90秒结算！')
+            : (isRestorationLevel ? CANVAS_TRANSLATIONS[lang].exploreGuideRestore : CANVAS_TRANSLATIONS[lang].exploreGuide),
+          WIDTH / 2,
+          15 + 48 / 2
+        );
         ctx.restore();
       } else if (!gate.isOpen) {
         ctx.save();
@@ -2575,14 +3510,24 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // Draw Guards & Vision Flashlights
       guardsRef.current.forEach(guard => {
+        const guardType = guard.type ?? 'inspector';
+        const guardStyle: Record<GuardType, { body: string; accent: string; beam: string; label: string }> = {
+          inspector: { body: '#1e293b', accent: '#eab308', beam: 'rgba(253, 224, 71, 0.35)', label: 'I' },
+          sweeper: { body: '#7c2d12', accent: '#fb923c', beam: 'rgba(251, 146, 60, 0.38)', label: 'S' },
+          curator: { body: '#3b0764', accent: '#f8fafc', beam: 'rgba(216, 180, 254, 0.34)', label: 'C' },
+          drone: { body: '#083344', accent: '#22d3ee', beam: 'rgba(34, 211, 238, 0.28)', label: 'D' },
+          sentinel: { body: '#312e81', accent: '#c084fc', beam: 'rgba(192, 132, 252, 0.34)', label: 'T' },
+        };
+        const style = guardStyle[guardType];
+
         // A. Draw Vision Cone (Flashlight Beam)
         ctx.save();
         const startAngle = guard.angle - guard.visionAngle / 2;
         const endAngle = guard.angle + guard.visionAngle / 2;
 
         // Flashlight beam color based on alert state
-        let beamColorStart = 'rgba(253, 224, 71, 0.35)'; // bright yellow
-        let beamColorEnd = 'rgba(253, 224, 71, 0.0)';
+        let beamColorStart = style.beam;
+        let beamColorEnd = style.beam.replace(/0\.\d+\)/, '0.0)');
         
         if (guard.state === 'suspicious') {
           beamColorStart = 'rgba(249, 115, 22, 0.5)'; // bright orange
@@ -2608,7 +3553,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fill();
         ctx.restore();
 
-        // B. Draw Guard Character (Museum inspector style)
+        // B. Draw Guard Character with type-specific silhouettes
         ctx.save();
         ctx.translate(guard.x, guard.y);
         ctx.rotate(guard.angle);
@@ -2617,33 +3562,85 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.shadowColor = 'rgba(0,0,0,0.5)';
         ctx.shadowBlur = 8;
 
-        // Blue Uniform coat
-        ctx.fillStyle = '#1e293b';
-        ctx.beginPath();
-        ctx.arc(0, 0, guard.radius, 0, Math.PI * 2);
-        ctx.fill();
+        if (guardType === 'drone') {
+          ctx.fillStyle = style.body;
+          ctx.beginPath();
+          ctx.moveTo(0, -guard.radius);
+          ctx.lineTo(guard.radius, 0);
+          ctx.lineTo(0, guard.radius);
+          ctx.lineTo(-guard.radius, 0);
+          ctx.closePath();
+          ctx.fill();
 
-        // Golden badge
-        ctx.fillStyle = '#eab308';
-        ctx.beginPath();
-        ctx.arc(8, -6, 4, 0, Math.PI * 2);
-        ctx.fill();
+          ctx.strokeStyle = style.accent;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(-guard.radius - 8, -guard.radius - 8);
+          ctx.lineTo(guard.radius + 8, guard.radius + 8);
+          ctx.moveTo(guard.radius + 8, -guard.radius - 8);
+          ctx.lineTo(-guard.radius - 8, guard.radius + 8);
+          ctx.stroke();
 
-        // Security Cap visor
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(8, -guard.radius/2, 6, guard.radius);
+          ctx.fillStyle = style.accent;
+          ctx.beginPath();
+          ctx.arc(0, 0, 5, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = style.body;
+          ctx.beginPath();
+          if (guardType === 'sentinel') {
+            ctx.roundRect(-guard.radius, -guard.radius, guard.radius * 2, guard.radius * 2, 5);
+          } else {
+            ctx.arc(0, 0, guard.radius, 0, Math.PI * 2);
+          }
+          ctx.fill();
 
-        // Hair / Head
-        ctx.fillStyle = '#334155';
-        ctx.beginPath();
-        ctx.arc(-2, 0, guard.radius - 4, 0, Math.PI * 2);
-        ctx.fill();
+          ctx.fillStyle = style.accent;
+          ctx.beginPath();
+          ctx.arc(8, -6, 4, 0, Math.PI * 2);
+          ctx.fill();
 
-        // Flashlight instrument hand held
-        ctx.fillStyle = '#64748b';
-        ctx.fillRect(6, 6, 8, 4);
-        ctx.fillStyle = '#fbbf24'; // lens
-        ctx.fillRect(14, 6, 2, 4);
+          ctx.fillStyle = '#0f172a';
+          ctx.fillRect(8, -guard.radius / 2, 6, guard.radius);
+
+          ctx.fillStyle = guardType === 'curator' ? '#581c87' : '#334155';
+          ctx.beginPath();
+          ctx.arc(-2, 0, guard.radius - 4, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#64748b';
+          ctx.fillRect(6, 6, 8, 4);
+          ctx.fillStyle = style.accent;
+          ctx.fillRect(14, 6, 2, 4);
+
+          if (guardType === 'sweeper') {
+            ctx.strokeStyle = style.accent;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, guard.radius + 5, -0.7, 0.7);
+            ctx.stroke();
+          } else if (guardType === 'curator') {
+            ctx.fillStyle = '#f8fafc';
+            ctx.fillRect(-10, 8, 14, 5);
+          } else if (guardType === 'sentinel') {
+            ctx.strokeStyle = style.accent;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.moveTo(-8, -8);
+            ctx.lineTo(8, 8);
+            ctx.moveTo(8, -8);
+            ctx.lineTo(-8, 8);
+            ctx.stroke();
+          }
+        }
+
+        ctx.shadowBlur = 0;
+        ctx.rotate(-guard.angle);
+        ctx.fillStyle = style.accent;
+        ctx.font = 'bold 9px monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(style.label, 0, 0);
 
         ctx.restore();
 
@@ -2685,6 +3682,96 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         }
       });
 
+      if (isLocalDuel) {
+        duelPlayersRef.current.forEach(duelPlayer => {
+          if (duelPlayer.eliminated) {
+            ctx.save();
+            ctx.globalAlpha = 0.65;
+            ctx.fillStyle = duelPlayer.trailColor;
+            ctx.font = 'bold 13px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(`${duelPlayer.label} ${duelPlayer.respawnTimer.toFixed(1)}s`, duelPlayer.x, duelPlayer.y - 28);
+            ctx.strokeStyle = duelPlayer.trailColor;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(duelPlayer.x, duelPlayer.y, duelPlayer.radius + 8, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (duelPlayer.respawnTimer / DUEL_RESPAWN_SECONDS));
+            ctx.stroke();
+            ctx.restore();
+            return;
+          }
+
+          ctx.save();
+          ctx.translate(duelPlayer.x, duelPlayer.y);
+          ctx.globalAlpha = duelPlayer.ghostTime > 0 ? 0.45 : 1;
+          ctx.shadowColor = duelPlayer.trailColor;
+          ctx.shadowBlur = duelPlayer.ghostTime > 0 ? 18 : 8;
+          ctx.fillStyle = duelPlayer.color;
+          ctx.beginPath();
+          ctx.arc(0, 0, duelPlayer.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = duelPlayer.trailColor;
+          ctx.lineWidth = 2.5;
+          ctx.beginPath();
+          ctx.arc(0, 0, duelPlayer.radius + 2, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.shadowBlur = 0;
+          const lookX = duelPlayer.vx !== 0 ? Math.sign(duelPlayer.vx) * 3 : 0;
+          const lookY = duelPlayer.vy !== 0 ? Math.sign(duelPlayer.vy) * 2 : -1;
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(-5, -2, 5, 0, Math.PI * 2);
+          ctx.arc(5, -2, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#111827';
+          ctx.beginPath();
+          ctx.arc(-5 + lookX, -2 + lookY, 2.5, 0, Math.PI * 2);
+          ctx.arc(5 + lookX, -2 + lookY, 2.5, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.restore();
+
+          ctx.save();
+          ctx.font = 'bold 11px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+          ctx.beginPath();
+          ctx.roundRect(duelPlayer.x - 42, duelPlayer.y - duelPlayer.radius - 40, 84, 26, 4);
+          ctx.fill();
+          ctx.fillStyle = duelPlayer.trailColor;
+          const status = duelPlayer.ghostTime > 0
+            ? `${duelPlayer.label} GHOST`
+            : `${duelPlayer.label} ${Math.round(duelPlayer.camouflageRate * 100)}%`;
+          ctx.fillText(status, duelPlayer.x, duelPlayer.y - duelPlayer.radius - 25);
+          if (duelPlayer.trappedTime > 0) {
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.arc(duelPlayer.x, duelPlayer.y, duelPlayer.radius + 10, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (duelPlayer.trappedTime / DUEL_TRAP_SECONDS));
+            ctx.stroke();
+          }
+          ctx.restore();
+        });
+
+        ctx.save();
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.88)';
+        ctx.strokeStyle = 'rgba(251, 191, 36, 0.55)';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.roundRect(WIDTH / 2 - 245, HEIGHT - 58, 490, 38, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.font = 'bold 14px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(
+          duelMessage || (lang === 'en' ? 'Local Duel: restore more canvas, trap your rival, survive the guards.' : '本地双人：复苏更多画布，围困对手，躲开巡逻兵。'),
+          WIDTH / 2,
+          HEIGHT - 35
+        );
+        ctx.restore();
+      } else {
       // Draw Player Character (A highly animated stickman / cute blob)
       const player = playerRef.current;
       ctx.save();
@@ -3224,6 +4311,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillText(CANVAS_TRANSLATIONS[lang].pressSpaceToCamo, player.x, player.y - player.radius - 13);
         ctx.restore();
       }
+      }
     };
 
     // Main Loop caller
@@ -3240,7 +4328,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return () => {
       cancelAnimationFrame(animationFrameId);
     };
-  }, [painting, isPaused]);
+  }, [painting, isPaused, mode]);
 
   // Color blending helper
   const lerpColor = (a: string, b: string, amount: number): string => {
@@ -3255,6 +4343,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Click on canvas to absorb color at coordinates
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isPaused || !isGameRunning.current) return;
+    if (isLocalDuel) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -3280,6 +4369,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   // Quick select color from custom palette
   const handleSelectPaletteColor = (hex: string) => {
     if (isPaused || !isGameRunning.current) return;
+    if (isLocalDuel) return;
     const player = playerRef.current;
     player.targetColor = hex;
     player.isPainted = true;
@@ -3292,28 +4382,53 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const displayedRestorationRate = painting.proceduralType === 'sunflowers' ? sunflowerRevealRate : maskRevealRate;
   const restorationProgressWidth = Math.min(100, (displayedRestorationRate / restorationTargetPercent) * 100);
+  const duelP1Percent = (duelScores.p1 / (WIDTH * HEIGHT)) * 100;
+  const duelP2Percent = (duelScores.p2 / (WIDTH * HEIGHT)) * 100;
 
   return (
     <div className="flex flex-col items-center w-full">
       {/* HUD status bars */}
       <div className="w-full flex flex-wrap gap-4 items-center justify-between mb-4 bg-[#151515] text-[#f2f2f2] p-4 rounded-lg border border-white/10 shadow-lg">
-        {/* Camouflage meter */}
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-white/50 tracking-wider font-serif">
-            {lang === 'en' ? 'MUTATION INTEGRITY' : 'MUTATION INTEGRITY / 伪装度'}
-          </span>
-          <div className="relative w-32 h-4 bg-black rounded overflow-hidden border border-white/10">
-            <div
-              className={`h-full transition-all duration-150 ${
-                matchRate > 85 ? 'bg-emerald-500' : matchRate > 50 ? 'bg-[#c5a059]' : 'bg-red-500'
-              }`}
-              style={{ width: `${matchRate}%` }}
-            />
-            <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
-              {matchRate}%
-            </span>
+        {/* Camouflage meter / Duel score */}
+        {isLocalDuel ? (
+          <div className="flex flex-col gap-1 min-w-[260px]">
+            <div className="flex items-center justify-between text-[10px] font-mono">
+              <span className="text-amber-300 font-bold">P1 {duelP1Percent.toFixed(1)}%</span>
+              <span className="text-white/55">{lang === 'en' ? 'LOCAL DUEL' : '本地双人'}</span>
+              <span className="text-cyan-300 font-bold">P2 {duelP2Percent.toFixed(1)}%</span>
+            </div>
+            <div className="relative h-4 bg-black rounded overflow-hidden border border-white/10">
+              <div
+                className="absolute left-0 top-0 h-full bg-amber-400/80 transition-all duration-200"
+                style={{ width: `${Math.min(100, duelP1Percent)}%` }}
+              />
+              <div
+                className="absolute right-0 top-0 h-full bg-cyan-400/80 transition-all duration-200"
+                style={{ width: `${Math.min(100, duelP2Percent)}%` }}
+              />
+              <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
+                {duelTimeLeft}s · KO {duelDeaths.p1}:{duelDeaths.p2}
+              </span>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-white/50 tracking-wider font-serif">
+              {lang === 'en' ? 'MUTATION INTEGRITY' : 'MUTATION INTEGRITY / 伪装度'}
+            </span>
+            <div className="relative w-32 h-4 bg-black rounded overflow-hidden border border-white/10">
+              <div
+                className={`h-full transition-all duration-150 ${
+                  matchRate > 85 ? 'bg-emerald-500' : matchRate > 50 ? 'bg-[#c5a059]' : 'bg-red-500'
+                }`}
+                style={{ width: `${matchRate}%` }}
+              />
+              <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
+                {matchRate}%
+              </span>
+            </div>
+          </div>
+        )}
 
         {/* Level Objectives: Orbs/Restoration & Exit Status */}
         <div className="flex items-center gap-5">
@@ -3393,13 +4508,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           <span className="text-base flex-shrink-0">{painting.proceduralType === 'sunflowers' ? '🌻' : '🎨'}</span>
           <div>
             <strong className="block text-[#c5a059] mb-0.5 uppercase tracking-wider font-bold">
-              {painting.proceduralType === 'sunflowers'
+              {isLocalDuel
+                ? (lang === 'en' ? 'LOCAL DUEL: RESTORE, TRAP, RESPAWN' : '【本地双人：复苏、围困、复活】')
+                : painting.proceduralType === 'sunflowers'
                 ? (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: VAN GOGH REVEAL' : '【向日葵关卡专属特殊机制：色彩复苏】')
                 : (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: ARTWORK RESTORATION' : '【特殊机制：画作复苏】')
               }
             </strong>
             <span>
-              {painting.proceduralType === 'sunflowers'
+              {isLocalDuel
+                ? (lang === 'en'
+                  ? `P1 uses WASD + Space/F. P2 uses Arrow Keys + Enter/Right Shift. Restore more canvas in 90 seconds; enclosing a rival removes them for 2 seconds. Total restoration at ${restorationTargetPercent}% ends the duel early.`
+                  : `P1 使用 WASD + 空格/F，P2 使用方向键 + Enter/右Shift。90秒内复苏更多画布；围住对手会让其消失2秒后随机复活。总复苏达到 ${restorationTargetPercent}% 会提前结算。`)
+                : painting.proceduralType === 'sunflowers'
                 ? (lang === 'en'
                   ? `The masterpiece starts covered in a white canvas! Move around or press Space / F (or click) to scratch it off. Reach ${restorationTargetPercent}% restoration to open the exit; restored paint also blocks guard movement.`
                   : `向日葵画作开始时被白色画布完全遮挡！移动小人或按空格键/F键（或点击画面）可以吸走白底。复苏达到 ${restorationTargetPercent}% 后出口开启；已复苏区域也会阻挡守卫移动。`)
@@ -3433,7 +4554,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
               />
             </div>
             <p className="text-[10px] text-white/50 italic font-sans">
-              {lang === 'en'
+              {isLocalDuel
+                ? (lang === 'en'
+                  ? `⚔️ Timer duel: highest owned restoration wins. Reaching ${restorationTargetPercent}% total restoration ends the duel early.`
+                  : `⚔️ 双人计时赛：归属复苏更多者获胜。总复苏达到 ${restorationTargetPercent}% 会提前结算。`)
+                : lang === 'en'
                 ? `🎯 Restore at least ${restorationTargetPercent}% of the canvas to unlock the exit, then step through the portal!`
                 : `🎯 至少复苏 ${restorationTargetPercent}% 的画布即可开启出口，然后进入传送门逃出！`}
             </p>
@@ -3556,19 +4681,40 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       {/* Desktop Keyboard instructions helper */}
       <div className="w-full mt-4 px-5 py-3 bg-[#151515]/40 rounded border border-white/5 flex flex-col sm:flex-row items-center justify-between text-[11px] text-white/40 font-mono gap-3">
-        <div className="flex items-center gap-1.5 flex-wrap justify-center">
-          <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">W</span>
-          <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">A</span>
-          <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">S</span>
-          <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">D</span>
-          <span>{lang === 'en' ? 'or Arrow Keys to move player' : '或 方向键 移动小人'}</span>
-        </div>
-        <div className="flex items-center gap-1.5 flex-wrap justify-center">
-          <span className="bg-black text-[#c5a059] px-2.5 py-0.5 rounded border border-white/10">Space 键</span>
-          <span>{lang === 'en' ? 'or' : '或'}</span>
-          <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">F 键</span>
-          <span>{lang === 'en' ? 'to blend into background (6s)' : '吸取背景色 (持续 6 秒)'}</span>
-        </div>
+        {isLocalDuel ? (
+          <>
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              <span className="text-amber-300 font-bold">P1</span>
+              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">WASD</span>
+              <span>{lang === 'en' ? 'move' : '移动'}</span>
+              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">Space/F</span>
+              <span>{lang === 'en' ? 'blend' : '吸色'}</span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              <span className="text-cyan-300 font-bold">P2</span>
+              <span className="bg-black text-cyan-300 px-2 py-0.5 rounded border border-white/10">Arrow Keys</span>
+              <span>{lang === 'en' ? 'move' : '移动'}</span>
+              <span className="bg-black text-cyan-300 px-2 py-0.5 rounded border border-white/10">Enter / Right Shift</span>
+              <span>{lang === 'en' ? 'blend' : '吸色'}</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">W</span>
+              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">A</span>
+              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">S</span>
+              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">D</span>
+              <span>{lang === 'en' ? 'or Arrow Keys to move player' : '或 方向键 移动小人'}</span>
+            </div>
+            <div className="flex items-center gap-1.5 flex-wrap justify-center">
+              <span className="bg-black text-[#c5a059] px-2.5 py-0.5 rounded border border-white/10">Space 键</span>
+              <span>{lang === 'en' ? 'or' : '或'}</span>
+              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">F 键</span>
+              <span>{lang === 'en' ? 'to blend into background (6s)' : '吸取背景色 (持续 6 秒)'}</span>
+            </div>
+          </>
+        )}
         <div className="hidden lg:block text-[#c5a059]/60">
           <span>{CANVAS_TRANSLATIONS[lang].generalTip}</span>
         </div>

@@ -24,6 +24,8 @@ export interface Player {
 }
 
 export type GuardState = 'patrol' | 'suspicious' | 'alert';
+export type GuardType = 'inspector' | 'sweeper' | 'curator' | 'drone' | 'sentinel';
+export type GameMode = 'solo' | 'local-duel';
 
 export interface Guard {
   id: number;
@@ -35,10 +37,13 @@ export interface Guard {
   patrolPoints: Position[];
   currentPointIndex: number;
   state: GuardState;
+  type?: GuardType;
   visionAngle: number; // FOV in radians
   visionRange: number; // Flashlight distance
   alertLevel: number; // 0 to 100, increases when spotting player
   pulseTime: number; // for animations
+  abilityCooldown?: number;
+  rotateDirection?: number;
 }
 
 export interface ColorOrb {
@@ -79,7 +84,9 @@ export interface PaintingData {
   guardSpeed: number;
   visionRange: number;
   restorationTargetPercent?: number; // Optional target for mask-restoration levels
-  proceduralType: 'monalisa' | 'starrynight' | 'scream' | 'greatwave' | 'pearlearring' | 'sunflowers' | 'waterlilies' | 'thekiss' | 'venus' | 'liberty' | 'persistence' | 'cafeterrace';
+  guardMix?: GuardType[];
+  duelEnabled?: boolean;
+  proceduralType: 'monalisa' | 'starrynight' | 'scream' | 'greatwave' | 'pearlearring' | 'sunflowers' | 'waterlilies' | 'thekiss' | 'venus' | 'liberty' | 'persistence' | 'cafeterrace' | 'earthlydelights' | 'temeraire' | 'grandjatte' | 'composition8' | 'boogiewoogie' | 'redstudio';
 }
 
 export interface GameStats {

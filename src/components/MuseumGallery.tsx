@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { PaintingData, LevelDifficulty } from '../types';
+import { GameMode, PaintingData, LevelDifficulty } from '../types';
 import { GameCanvas } from './GameCanvas';
 import { ProceduralArtThumbnail } from './ProceduralArtThumbnail';
 import { audio } from './AudioEngine';
@@ -70,7 +70,7 @@ const readSavedGame = (): GallerySave | null => {
         timesSpotted: Number.isFinite(stats.timesSpotted) ? stats.timesSpotted : 0,
         secondsPlayed: Number.isFinite(stats.secondsPlayed) ? stats.secondsPlayed : 0,
       },
-      lang: parsed.lang === 'en' ? 'en' : 'zh',
+      lang: parsed.lang === 'zh' ? 'zh' : 'en',
       isMuted: parsed.isMuted === true,
       unlockedLevelCount,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
@@ -217,6 +217,7 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     guardSpeed: 1.5,
     visionRange: 195,
     restorationTargetPercent: 98,
+    duelEnabled: true,
     proceduralType: 'sunflowers',
     palette: [
       { name: '花芯棕褐 (Ochre Brown)', nameEn: 'Ochre Seed Center', hex: '#795548' },
@@ -266,6 +267,7 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     guardSpeed: 1.5,
     visionRange: 195,
     restorationTargetPercent: 40,
+    duelEnabled: true,
     proceduralType: 'thekiss',
     palette: [
       { name: '黄金之海 (Gold)', nameEn: 'Golden Leaf', hex: '#d4af37' },
@@ -291,6 +293,7 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     guardSpeed: 1.55,
     visionRange: 200,
     restorationTargetPercent: 50,
+    duelEnabled: true,
     proceduralType: 'venus',
     palette: [
       { name: '维纳斯肤 (Venus Flesh)', nameEn: 'Delicate Skin', hex: '#ffebee' },
@@ -316,6 +319,7 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     guardSpeed: 1.6,
     visionRange: 200,
     restorationTargetPercent: 60,
+    duelEnabled: true,
     proceduralType: 'liberty',
     palette: [
       { name: '自由之赤 (Liberty Red)', nameEn: 'Revolutionary Red', hex: '#c53030' },
@@ -341,6 +345,7 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     guardSpeed: 1.65,
     visionRange: 205,
     restorationTargetPercent: 75,
+    duelEnabled: true,
     proceduralType: 'persistence',
     palette: [
       { name: '荒漠暖黄 (Desert Sand)', nameEn: 'Warm Desert Sand', hex: '#e2b36e' },
@@ -366,6 +371,7 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     guardSpeed: 1.7,
     visionRange: 210,
     restorationTargetPercent: 90,
+    duelEnabled: true,
     proceduralType: 'cafeterrace',
     palette: [
       { name: '露台暖金 (Cafe Gold)', nameEn: 'Terrace Amber Gold', hex: '#ffc107' },
@@ -373,6 +379,168 @@ const PAINTINGS_GALLERY: PaintingData[] = [
       { name: '深邃夜空 (Cobalt Midnight)', nameEn: 'Deep Cobalt Night', hex: '#0c1446' },
       { name: '青石砖道 (Cobblestone)', nameEn: 'Cobblestone Teal', hex: '#00796b' },
       { name: '咖啡桌褐 (Cafe Terracotta)', nameEn: 'Rust Terracotta', hex: '#bf360c' },
+    ],
+  },
+  {
+    id: 'earthlydelights',
+    name: '人间乐园 (Garden of Earthly Delights)',
+    nameEn: 'Garden of Earthly Delights',
+    artist: '希罗尼穆斯·博斯',
+    artistEn: 'Hieronymus Bosch',
+    year: '1490-1510',
+    description: '以博斯三联画为灵感的原创抽象关卡：黑暗展厅中漂浮着粉色果实、青绿色水域和碎片化的奇异建筑。复苏 70% 后开启出口，新的巡逻兵开始拥有不同能力。',
+    descriptionEn: 'An original abstract homage to Bosch: pink fruit moons, teal water ruins, and strange fractured architecture float in a dark museum arena. Restore 70% to open the portal while upgraded guards begin to appear.',
+    url: 'https://www.museodelprado.es/en/the-collection/art-work/the-garden-of-earthly-delights-triptych/02388242-6d6a-4e9e-a992-e1311eab3609',
+    difficulty: '噩梦',
+    backgroundColor: 'bg-fuchsia-950/40',
+    guardCount: 6,
+    guardSpeed: 1.72,
+    visionRange: 210,
+    restorationTargetPercent: 70,
+    guardMix: ['inspector', 'sweeper', 'curator', 'inspector', 'sweeper', 'sentinel'],
+    duelEnabled: true,
+    proceduralType: 'earthlydelights',
+    palette: [
+      { name: '乐园粉果 (Fruit Rose)', nameEn: 'Fruit Rose', hex: '#f472b6' },
+      { name: '异界青池 (Teal Pool)', nameEn: 'Alien Teal Pool', hex: '#14b8a6' },
+      { name: '贝壳白塔 (Shell Ivory)', nameEn: 'Shell Ivory', hex: '#fff7ed' },
+      { name: '夜幕紫黑 (Abyss Violet)', nameEn: 'Abyss Violet', hex: '#1e1033' },
+      { name: '酸性新绿 (Acid Leaf)', nameEn: 'Acid Leaf', hex: '#a3e635' },
+    ],
+  },
+  {
+    id: 'temeraire',
+    name: '战舰归航 (The Fighting Temeraire)',
+    nameEn: 'The Fighting Temeraire',
+    artist: '约瑟夫·马洛德·威廉·透纳',
+    artistEn: 'J. M. W. Turner',
+    year: '1839',
+    description: '以透纳的黄昏名作为灵感，重做成霓虹雾海、金色残阳和幽灵战舰剪影。复苏 75% 后开门，宽扇形扫描的巡逻兵会压缩行动空间。',
+    descriptionEn: 'A neon fog-sea homage to Turner, with a ghost ship silhouette and molten sunset fragments. Restore 75% to open the portal while wide sweeping patrols compress your route.',
+    url: 'https://www.nationalgallery.org.uk/paintings/joseph-mallord-william-turner-the-fighting-temeraire',
+    difficulty: '噩梦',
+    backgroundColor: 'bg-orange-950/40',
+    guardCount: 6,
+    guardSpeed: 1.76,
+    visionRange: 215,
+    restorationTargetPercent: 75,
+    guardMix: ['sweeper', 'inspector', 'sentinel', 'curator', 'sweeper', 'inspector'],
+    duelEnabled: true,
+    proceduralType: 'temeraire',
+    palette: [
+      { name: '残阳熔金 (Molten Sun)', nameEn: 'Molten Sun', hex: '#f59e0b' },
+      { name: '暮海钴蓝 (Dusk Cobalt)', nameEn: 'Dusk Cobalt', hex: '#1d4ed8' },
+      { name: '蒸汽玫瑰 (Steam Rose)', nameEn: 'Steam Rose', hex: '#fb7185' },
+      { name: '舰影黑蓝 (Hull Shadow)', nameEn: 'Hull Shadow', hex: '#111827' },
+      { name: '雾光银白 (Fog Silver)', nameEn: 'Fog Silver', hex: '#e5e7eb' },
+    ],
+  },
+  {
+    id: 'grandjatte',
+    name: '大碗岛星期日 (La Grande Jatte)',
+    nameEn: 'A Sunday on La Grande Jatte',
+    artist: '乔治·修拉',
+    artistEn: 'Georges Seurat',
+    year: '1884-1886',
+    description: '以点彩法名作为灵感，但重构成高密度发光点阵、公园剪影和断裂色带。复苏 80% 后开门，策展人会擦除局部复苏屏障。',
+    descriptionEn: 'A pointillist classic reimagined as luminous dot grids, park silhouettes, and fractured color bands. Restore 80% to open the portal while curators erase small restored barriers.',
+    url: 'https://www.artic.edu/artworks/27992/a-sunday-on-la-grande-jatte-1884',
+    difficulty: '噩梦',
+    backgroundColor: 'bg-emerald-950/40',
+    guardCount: 6,
+    guardSpeed: 1.8,
+    visionRange: 215,
+    restorationTargetPercent: 80,
+    guardMix: ['curator', 'sweeper', 'inspector', 'drone', 'curator', 'sentinel'],
+    duelEnabled: true,
+    proceduralType: 'grandjatte',
+    palette: [
+      { name: '点彩湖蓝 (Point Blue)', nameEn: 'Point Blue', hex: '#38bdf8' },
+      { name: '草地荧绿 (Park Green)', nameEn: 'Park Green', hex: '#22c55e' },
+      { name: '伞面朱红 (Parasol Red)', nameEn: 'Parasol Red', hex: '#ef4444' },
+      { name: '午后奶黄 (Afternoon Cream)', nameEn: 'Afternoon Cream', hex: '#fde68a' },
+      { name: '剪影墨黑 (Figure Ink)', nameEn: 'Figure Ink', hex: '#111827' },
+    ],
+  },
+  {
+    id: 'composition8',
+    name: '构成8号 (Composition 8)',
+    nameEn: 'Composition 8',
+    artist: '瓦西里·康定斯基',
+    artistEn: 'Wassily Kandinsky',
+    year: '1923',
+    description: '现代抽象致敬关：圆、三角、锐线和几何声波在黑色展厅里震荡。复苏 85% 后开门，无视屏障的无人机开始加入巡逻。',
+    descriptionEn: 'A modern abstract homage of circles, triangles, knife-lines, and geometric sound waves vibrating in a black museum field. Restore 85% while drones start ignoring restored barriers.',
+    url: 'https://www.guggenheim.org/artwork/1924',
+    difficulty: '噩梦',
+    backgroundColor: 'bg-slate-950/50',
+    guardCount: 6,
+    guardSpeed: 1.84,
+    visionRange: 220,
+    restorationTargetPercent: 85,
+    guardMix: ['drone', 'sentinel', 'sweeper', 'curator', 'drone', 'inspector'],
+    duelEnabled: true,
+    proceduralType: 'composition8',
+    palette: [
+      { name: '构成红 (Construct Red)', nameEn: 'Construct Red', hex: '#ef4444' },
+      { name: '几何蓝 (Geometry Blue)', nameEn: 'Geometry Blue', hex: '#2563eb' },
+      { name: '圆相金 (Orbit Gold)', nameEn: 'Orbit Gold', hex: '#facc15' },
+      { name: '音线黑 (Line Black)', nameEn: 'Line Black', hex: '#020617' },
+      { name: '粉墙白 (Gallery White)', nameEn: 'Gallery White', hex: '#f8fafc' },
+    ],
+  },
+  {
+    id: 'boogiewoogie',
+    name: '百老汇爵士 (Broadway Boogie Woogie)',
+    nameEn: 'Broadway Boogie Woogie',
+    artist: '皮特·蒙德里安',
+    artistEn: 'Piet Mondrian',
+    year: '1942-1943',
+    description: '以蒙德里安城市网格为灵感的原创赛道：黄线、红蓝信号块和脉冲方格构成爵士迷宫。复苏 90% 后开门，固定旋转探照哨制造节拍压力。',
+    descriptionEn: 'An original city-grid arena inspired by Mondrian: yellow rails, red-blue signals, and pulsing square traffic become a jazz maze. Restore 90% while sentinels scan on the beat.',
+    url: 'https://www.moma.org/collection/works/78682',
+    difficulty: '噩梦',
+    backgroundColor: 'bg-yellow-950/30',
+    guardCount: 6,
+    guardSpeed: 1.88,
+    visionRange: 225,
+    restorationTargetPercent: 90,
+    guardMix: ['sentinel', 'drone', 'sweeper', 'sentinel', 'curator', 'drone'],
+    duelEnabled: true,
+    proceduralType: 'boogiewoogie',
+    palette: [
+      { name: '爵士黄轨 (Jazz Yellow)', nameEn: 'Jazz Yellow', hex: '#fde047' },
+      { name: '信号红块 (Signal Red)', nameEn: 'Signal Red', hex: '#dc2626' },
+      { name: '电车蓝格 (Transit Blue)', nameEn: 'Transit Blue', hex: '#2563eb' },
+      { name: '街区白光 (Block White)', nameEn: 'Block White', hex: '#f8fafc' },
+      { name: '夜路黑线 (Night Grid)', nameEn: 'Night Grid', hex: '#020617' },
+    ],
+  },
+  {
+    id: 'redstudio',
+    name: '红色画室 (The Red Studio)',
+    nameEn: 'The Red Studio',
+    artist: '亨利·马蒂斯',
+    artistEn: 'Henri Matisse',
+    year: '1911',
+    description: '以马蒂斯画室为灵感的终章：整座展厅变成红色平面，画框、桌椅和作品轮廓像迷宫一样漂浮。复苏 95% 后开门，所有高级巡逻能力混合出现。',
+    descriptionEn: 'The finale turns the museum into a red studio plane: frames, chairs, tables, and artwork outlines float like a maze. Restore 95% while every advanced guard type appears together.',
+    url: 'https://www.moma.org/collection/works/78389',
+    difficulty: '噩梦',
+    backgroundColor: 'bg-red-950/50',
+    guardCount: 6,
+    guardSpeed: 1.92,
+    visionRange: 230,
+    restorationTargetPercent: 95,
+    guardMix: ['sentinel', 'curator', 'drone', 'sweeper', 'curator', 'sentinel'],
+    duelEnabled: true,
+    proceduralType: 'redstudio',
+    palette: [
+      { name: '画室深红 (Studio Red)', nameEn: 'Studio Red', hex: '#b91c1c' },
+      { name: '线稿粉白 (Outline Pink)', nameEn: 'Outline Pink', hex: '#fecdd3' },
+      { name: '冷画框蓝 (Frame Blue)', nameEn: 'Frame Blue', hex: '#1d4ed8' },
+      { name: '椅面酸绿 (Chair Lime)', nameEn: 'Chair Lime', hex: '#84cc16' },
+      { name: '夜影墨棕 (Shadow Umber)', nameEn: 'Shadow Umber', hex: '#292524' },
     ],
   }
 ];
@@ -528,13 +696,15 @@ export const MuseumGallery: React.FC = () => {
   const initialLevelIndex = isSavedLevelUnlocked
     ? Math.max(0, Math.min(PAINTINGS_GALLERY.length - 1, savedLevelIndex))
     : 0;
-  const [lang, setLang] = useState<'zh' | 'en'>(initialSave?.lang ?? 'zh');
+  const [lang, setLang] = useState<'zh' | 'en'>(initialSave?.lang ?? 'en');
   const [activePainting, setActivePainting] = useState<PaintingData>(PAINTINGS_GALLERY[initialLevelIndex]);
   const [gameState, setGameState] = useState<GameState>(isSavedLevelUnlocked ? (initialSave?.gameState ?? 'welcome') : 'welcome');
   const [levelIndex, setLevelIndex] = useState(initialLevelIndex);
   const [isMuted, setIsMuted] = useState(initialSave?.isMuted ?? false);
   const [failReason, setFailReason] = useState('');
+  const [clearSummary, setClearSummary] = useState('');
   const [unlockedLevelCount, setUnlockedLevelCount] = useState(initialUnlockedLevelCount);
+  const [currentMode, setCurrentMode] = useState<GameMode>('solo');
   
   // Stats
   const [stats, setStats] = useState<GalleryStats>(initialSave?.stats ?? DEFAULT_STATS);
@@ -589,17 +759,21 @@ export const MuseumGallery: React.FC = () => {
     return () => audio.stopMusic();
   }, [gameState]);
 
-  const handleStartGame = (painting: PaintingData, idx: number) => {
+  const handleStartGame = (painting: PaintingData, idx: number, mode: GameMode = 'solo') => {
     if (idx >= unlockedLevelCount) return;
+    const supportedMode = mode === 'local-duel' && painting.duelEnabled ? 'local-duel' : 'solo';
 
     setActivePainting(painting);
     setLevelIndex(idx);
+    setCurrentMode(supportedMode);
+    setClearSummary('');
     setGameState('playing');
     setActiveTab('game');
     audio.playCollect();
   };
 
-  const handleLevelCleared = () => {
+  const handleLevelCleared = (summary?: string) => {
+    setClearSummary(summary ?? '');
     setStats(prev => ({ ...prev, levelsCleared: Math.max(prev.levelsCleared, levelIndex + 1) }));
     setUnlockedLevelCount(prev => Math.min(PAINTINGS_GALLERY.length, Math.max(prev, levelIndex + 2)));
     
@@ -620,12 +794,15 @@ export const MuseumGallery: React.FC = () => {
   const handleNextLevel = () => {
     const nextIdx = levelIndex + 1;
     if (nextIdx < PAINTINGS_GALLERY.length) {
-      handleStartGame(PAINTINGS_GALLERY[nextIdx], nextIdx);
+      const nextPainting = PAINTINGS_GALLERY[nextIdx];
+      const nextMode = currentMode === 'local-duel' && nextPainting.duelEnabled ? 'local-duel' : 'solo';
+      handleStartGame(nextPainting, nextIdx, nextMode);
     }
   };
 
   const handleRestartLevel = () => {
-    handleStartGame(activePainting, levelIndex);
+    const restartMode = currentMode === 'local-duel' && activePainting.duelEnabled ? 'local-duel' : 'solo';
+    handleStartGame(activePainting, levelIndex, restartMode);
   };
 
   const handleToggleMute = () => {
@@ -642,7 +819,9 @@ export const MuseumGallery: React.FC = () => {
     setUnlockedLevelCount(1);
     setLevelIndex(0);
     setActivePainting(PAINTINGS_GALLERY[0]);
+    setCurrentMode('solo');
     setFailReason('');
+    setClearSummary('');
     setGameState('welcome');
   };
 
@@ -847,22 +1026,39 @@ export const MuseumGallery: React.FC = () => {
                           </span>
                         </div>
 
-                        {/* Play action */}
-                        <button
-                          onClick={() => handleStartGame(p, idx)}
-                          disabled={!isUnlocked}
-                          aria-disabled={!isUnlocked}
-                          className={`w-full py-2 font-bold text-xs uppercase tracking-widest rounded transition-all duration-200 flex items-center justify-center gap-1.5 shadow ${
-                            isUnlocked
-                              ? 'bg-[#c5a059] hover:bg-[#d4b06d] text-black'
-                              : 'bg-black/50 text-white/30 border border-white/10 cursor-not-allowed'
-                          }`}
-                        >
-                          {isUnlocked ? <Play size={12} /> : <Lock size={12} />}
-                          {isUnlocked
-                            ? TRANSLATIONS[lang].enterGallery
-                            : (lang === 'en' ? 'LOCKED' : '未解锁')}
-                        </button>
+                        {/* Play actions */}
+                        <div className="flex flex-col gap-2">
+                          <button
+                            onClick={() => handleStartGame(p, idx, 'solo')}
+                            disabled={!isUnlocked}
+                            aria-disabled={!isUnlocked}
+                            className={`w-full py-2 font-bold text-xs uppercase tracking-widest rounded transition-all duration-200 flex items-center justify-center gap-1.5 shadow ${
+                              isUnlocked
+                                ? 'bg-[#c5a059] hover:bg-[#d4b06d] text-black'
+                                : 'bg-black/50 text-white/30 border border-white/10 cursor-not-allowed'
+                            }`}
+                          >
+                            {isUnlocked ? <Play size={12} /> : <Lock size={12} />}
+                            {isUnlocked
+                              ? TRANSLATIONS[lang].enterGallery
+                              : (lang === 'en' ? 'LOCKED' : '未解锁')}
+                          </button>
+                          {p.duelEnabled && (
+                            <button
+                              onClick={() => handleStartGame(p, idx, 'local-duel')}
+                              disabled={!isUnlocked}
+                              aria-disabled={!isUnlocked}
+                              className={`w-full py-2 font-bold text-xs uppercase tracking-widest rounded transition-all duration-200 flex items-center justify-center gap-1.5 border ${
+                                isUnlocked
+                                  ? 'bg-black/55 hover:bg-[#7c2d12]/60 text-amber-200 border-amber-500/40'
+                                  : 'bg-black/50 text-white/25 border-white/10 cursor-not-allowed'
+                              }`}
+                            >
+                              {isUnlocked ? <Sparkles size={12} /> : <Lock size={12} />}
+                              {lang === 'en' ? 'LOCAL DUEL' : '本地双人对战'}
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -896,6 +1092,7 @@ export const MuseumGallery: React.FC = () => {
             <div className="w-full max-w-4xl flex flex-col">
               <GameCanvas
                 painting={activePainting}
+                mode={currentMode}
                 onLevelCleared={handleLevelCleared}
                 onGameOver={handleGameOver}
                 isMuted={isMuted}
@@ -918,6 +1115,11 @@ export const MuseumGallery: React.FC = () => {
               <p className="text-xs text-white/60 font-mono mb-6">
                 {TRANSLATIONS[lang].successDesc}
               </p>
+              {clearSummary && (
+                <p className="text-xs text-amber-200 bg-amber-950/20 border border-amber-700/30 p-2.5 rounded mb-6 leading-relaxed font-mono">
+                  {clearSummary}
+                </p>
+              )}
 
               <div className="bg-black/60 p-4 rounded border border-white/10 text-left mb-6 space-y-2">
                 <p className="text-xs font-mono flex justify-between text-white/50">
@@ -1008,7 +1210,7 @@ export const MuseumGallery: React.FC = () => {
               <div className="grid grid-cols-2 gap-4 mb-8">
                 <div className="bg-black/60 p-4 rounded border border-white/10 text-center">
                   <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase">{TRANSLATIONS[lang].statsLevels}</span>
-                  <p className="text-2xl font-serif font-bold text-[#c5a059]">{stats.levelsCleared} / 12</p>
+                  <p className="text-2xl font-serif font-bold text-[#c5a059]">{stats.levelsCleared} / {PAINTINGS_GALLERY.length}</p>
                 </div>
                 <div className="bg-black/60 p-4 rounded border border-white/10 text-center">
                   <span className="text-[10px] text-white/40 font-mono tracking-widest uppercase">{TRANSLATIONS[lang].statsTime}</span>
