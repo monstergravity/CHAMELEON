@@ -26,13 +26,17 @@ const CANVAS_TRANSLATIONS = {
     exitOpenLabel: '🚪 出口已开启!',
     locked: '🔒 未解锁',
     collect3Orbs: '收集3个能量球',
+    restoreArtwork: '复苏画作',
     exploreGuide: '🔍 探索画廊，寻找隐藏的出口门！(收集3个能量球解锁)',
+    exploreGuideRestore: '🔍 复苏画作并寻找隐藏出口门！达到目标后出口会开启',
     orbsGoalReached: '⚡ 已发现出口门！现在收集 3 个能量球来开启它',
+    restorationGoalReached: '⚡ 画作复苏完成！现在寻找出口门并逃离',
     escapedOpen: '🎉 出口已解锁！快穿过传送门逃离！',
     movingWarning: '⚠️ 移动中',
     camouflageText: ' 伪装',
     pressSpaceToCamo: '按空格吸取背景色',
     fragments: 'FRAGMENTS / 碎片',
+    restoration: 'RESTORATION / 复苏',
     extraction: 'EXTRACTION / 门状态',
     riskAlert: 'RISK ALERT / 警惕度',
     paused: 'PAUSED / 计划暂停',
@@ -56,13 +60,17 @@ const CANVAS_TRANSLATIONS = {
     exitOpenLabel: '🚪 Exit portal is OPEN!',
     locked: '🔒 Locked',
     collect3Orbs: 'Collect 3 Orbs',
+    restoreArtwork: 'Restore Artwork',
     exploreGuide: '🔍 Explore and find the hidden exit! (Collect 3 orbs to unlock)',
+    exploreGuideRestore: '🔍 Restore the artwork. The portal opens at target progress',
     orbsGoalReached: '⚡ Exit door discovered! Collect 3 orbs to power it up',
+    restorationGoalReached: '⚡ Artwork restored! Find the exit portal and escape',
     escapedOpen: '🎉 Exit unlocked! Step into the portal to escape!',
     movingWarning: '⚠️ Moving',
     camouflageText: '% Camo',
     pressSpaceToCamo: 'Press Space to Blend',
     fragments: 'FRAGMENTS',
+    restoration: 'RESTORATION',
     extraction: 'EXTRACTION STATUS',
     riskAlert: 'RISK ALERT LEVEL',
     paused: 'PAUSED',
@@ -144,8 +152,9 @@ interface DecoyEntity {
   pulseTime: number; // animation
 }
 
-// Mask levels list
+// Mask restoration levels. Level 7 (waterlilies) intentionally stays on the classic orb loop.
 const MASK_LEVELS = ['sunflowers', 'thekiss', 'venus', 'liberty', 'persistence', 'cafeterrace'] as const;
+const DEFAULT_RESTORATION_TARGET_PERCENT = 98;
 
 export const GameCanvas: React.FC<GameCanvasProps> = ({
   painting,
@@ -155,6 +164,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   onToggleMute,
   lang = 'zh',
 }) => {
+  const isRestorationLevel = MASK_LEVELS.includes(painting.proceduralType as (typeof MASK_LEVELS)[number]);
+  const restorationTargetPercent = painting.restorationTargetPercent ?? DEFAULT_RESTORATION_TARGET_PERCENT;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const revealCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -219,6 +230,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Mask level reveal rate (reused for all mask levels)
   const [maskRevealRate, setMaskRevealRate] = useState(0);
+  const restorationRateRef = useRef<number>(0);
 
   // Track if game is active
   const isGameRunning = useRef<boolean>(true);
@@ -273,7 +285,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         pulseScale: 1.0,
       });
     }
-    orbsRef.current = orbs;
+    orbsRef.current = isRestorationLevel ? [] : orbs;
 
     // Initialize exit gate - Pick one perimeter/corner location at random
     const exitLocations = [
@@ -440,7 +452,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     // Reset Mask Level State
     setMaskRevealRate(0);
     setSunflowerRevealRate(0);
+    restorationRateRef.current = 0;
     clonesRef.current = [];
+    frameCountRef.current = 0;
 
     // Reset Powerup State
     timeFreezePowerupRef.current = {
@@ -488,7 +502,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     }
 
     // Initialize reveal canvas for mask levels
-    if (MASK_LEVELS.includes(painting.proceduralType)) {
+    if (isRestorationLevel) {
       const rCanvas = document.createElement('canvas');
       rCanvas.width = WIDTH;
       rCanvas.height = HEIGHT;
@@ -517,7 +531,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       keysPressed.current[e.key.toLowerCase()] = true;
 
       // Quick hotkey to paint (Space or F)
-      if (e.key === ' ' || k === 'f') {
+      if ((e.key === ' ' || k === 'f') && !e.repeat) {
         absorbColorUnderPlayer();
       }
     };
@@ -536,6 +550,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     };
   }, [painting]);
 
+  const resetCamouflageTimer = (player: Player) => {
+    player.camoMaxTime = player.camoMaxTime ?? 6.0;
+    player.camoTimeLeft = player.camoMaxTime;
+  };
+
   // Handle color absorption at player's current coordinate
   const absorbColorUnderPlayer = () => {
     if (isPaused || !isGameRunning.current) return;
@@ -545,6 +564,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     
     player.targetColor = color;
     player.isPainted = true;
+    resetCamouflageTimer(player);
     setActiveColor(color);
 
     // Play splat sound
@@ -615,8 +635,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const cx = Math.max(0, Math.min(WIDTH - 1, x));
     const cy = Math.max(0, Math.min(HEIGHT - 1, y));
 
-    // Special sunflowers mask check
-    if (painting.proceduralType === 'sunflowers' && revealCanvasRef.current) {
+    // Covered mask pixels behave like a white canvas until restored.
+    if (isRestorationLevel && revealCanvasRef.current) {
       try {
         const revealCtx = revealCanvasRef.current.getContext('2d', { willReadFrequently: true });
         if (revealCtx) {
@@ -677,6 +697,39 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     } catch (e) {
       return 0;
     }
+  };
+
+  const isRestoredPixel = (x: number, y: number): boolean => {
+    if (!isRestorationLevel) return false;
+    const canvas = revealCanvasRef.current;
+    if (!canvas) return false;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    if (!ctx) return false;
+
+    const cx = Math.max(0, Math.min(WIDTH - 1, Math.round(x)));
+    const cy = Math.max(0, Math.min(HEIGHT - 1, Math.round(y)));
+
+    try {
+      const pixel = ctx.getImageData(cx, cy, 1, 1).data;
+      return pixel[3] <= 10;
+    } catch (error) {
+      return false;
+    }
+  };
+
+  const wouldGuardEnterRestoredArea = (x: number, y: number, radius: number): boolean => {
+    if (!isRestorationLevel) return false;
+
+    const sampleRadius = Math.max(8, radius * 0.75);
+    const samples = [
+      { dx: 0, dy: 0 },
+      { dx: sampleRadius, dy: 0 },
+      { dx: -sampleRadius, dy: 0 },
+      { dx: 0, dy: sampleRadius },
+      { dx: 0, dy: -sampleRadius },
+    ];
+
+    return samples.some(point => isRestoredPixel(x + point.dx, y + point.dy));
   };
 
   // Hex conversion helpers
@@ -1921,24 +1974,26 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         frameCountRef.current++;
         if (frameCountRef.current % 10 === 0) {
           const pct = 100 - getWhiteMaskPercentage();
+          restorationRateRef.current = pct;
           setSunflowerRevealRate(Math.min(100, Math.round(pct)));
           setMaskRevealRate(Math.min(100, Math.round(pct)));
 
           // Size scaling: radius goes from 16 up to 34
           player.radius = 16 + (pct / 100) * 18;
 
-          // Clear target check (win condition)
-          if (pct >= 98) {
-            isGameRunning.current = false;
-            audio.playWin();
-            onLevelCleared();
-            return;
+          // Restoration target opens the exit; entering the gate still clears the level.
+          if (pct >= restorationTargetPercent && !exitGateRef.current.isOpen) {
+            const gate = exitGateRef.current;
+            gate.isOpen = true;
+            setIsExitOpen(true);
+            audio.playCollect();
+            spawnSplatParticles(gate.x + gate.width / 2, gate.y + gate.height / 2, '#fbbf24');
           }
         }
       }
 
       // Handle mask levels (universal)
-      if (MASK_LEVELS.includes(painting.proceduralType) && painting.proceduralType !== 'sunflowers') {
+      if (isRestorationLevel && painting.proceduralType !== 'sunflowers') {
         // Reveal paint under player
         revealPaintingAt(player.x, player.y, player.radius + 6);
 
@@ -1946,17 +2001,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         frameCountRef.current++;
         if (frameCountRef.current % 10 === 0) {
           const pct = 100 - getWhiteMaskPercentage();
+          restorationRateRef.current = pct;
           setMaskRevealRate(Math.min(100, Math.round(pct)));
 
           // Size scaling: radius goes from 16 up to 34
           player.radius = 16 + (pct / 100) * 18;
 
-          // Clear target check (win condition)
-          if (pct >= 98) {
-            isGameRunning.current = false;
-            audio.playWin();
-            onLevelCleared();
-            return;
+          // Restoration target opens the exit; entering the gate still clears the level.
+          if (pct >= restorationTargetPercent && !exitGateRef.current.isOpen) {
+            const gate = exitGateRef.current;
+            gate.isOpen = true;
+            setIsExitOpen(true);
+            audio.playCollect();
+            spawnSplatParticles(gate.x + gate.width / 2, gate.y + gate.height / 2, '#fbbf24');
           }
         }
       }
@@ -2159,31 +2216,33 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         spawnSplatParticles(gateCenterX, gateCenterY, '#fbbf24');
       }
 
-      // 4. Update Orbs
-      orbsRef.current.forEach(orb => {
-        if (!orb.collected) {
-          // Check collision
-          const dist = Math.hypot(player.x - orb.x, player.y - orb.y);
-          if (dist < player.radius + orb.radius) {
-            orb.collected = true;
-            audio.playCollect();
-            // Spawn splash in orb color
-            spawnSplatParticles(orb.x, orb.y, orb.color);
-            
-            const newlyCollectedCount = orbsRef.current.filter(o => o.collected).length;
-            setOrbsCollected(newlyCollectedCount);
+      // 4. Update Orbs. Restoration levels open the exit through artwork progress instead.
+      if (!isRestorationLevel) {
+        orbsRef.current.forEach(orb => {
+          if (!orb.collected) {
+            // Check collision
+            const dist = Math.hypot(player.x - orb.x, player.y - orb.y);
+            if (dist < player.radius + orb.radius) {
+              orb.collected = true;
+              audio.playCollect();
+              // Spawn splash in orb color
+              spawnSplatParticles(orb.x, orb.y, orb.color);
 
-            // If all 3 collected, open exit gate!
-            if (newlyCollectedCount === 3) {
-              exitGateRef.current.isOpen = true;
-              setIsExitOpen(true);
-              audio.playWin();
+              const newlyCollectedCount = orbsRef.current.filter(o => o.collected).length;
+              setOrbsCollected(newlyCollectedCount);
+
+              // If all 3 collected, open exit gate!
+              if (newlyCollectedCount === 3) {
+                exitGateRef.current.isOpen = true;
+                setIsExitOpen(true);
+                audio.playWin();
+              }
             }
+            // Pulse scale anim
+            orb.pulseScale = 1.0 + Math.sin(Date.now() * 0.006) * 0.15;
           }
-          // Pulse scale anim
-          orb.pulseScale = 1.0 + Math.sin(Date.now() * 0.006) * 0.15;
-        }
-      });
+        });
+      }
 
       // 5. Check Exit Goal Collision (only if open and discovered)
       if (gate.isOpen && gate.isDiscovered) {
@@ -2230,10 +2289,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           let angleDiff = angleToTarget - guard.angle;
           // Normalize to -PI to PI
           angleDiff = Math.atan2(Math.sin(angleDiff), Math.cos(angleDiff));
-          guard.angle += angleDiff * 0.15;
+          const nextAngle = guard.angle + angleDiff * 0.15;
+          const nextX = guard.x + Math.cos(nextAngle) * guard.speed;
+          const nextY = guard.y + Math.sin(nextAngle) * guard.speed;
 
-          guard.x += Math.cos(guard.angle) * guard.speed;
-          guard.y += Math.sin(guard.angle) * guard.speed;
+          if (wouldGuardEnterRestoredArea(nextX, nextY, guard.radius)) {
+            guard.currentPointIndex = (guard.currentPointIndex + 1) % guard.patrolPoints.length;
+            guard.angle = Math.atan2(Math.sin(guard.angle + Math.PI * 0.75), Math.cos(guard.angle + Math.PI * 0.75));
+          } else {
+            guard.angle = nextAngle;
+            guard.x = nextX;
+            guard.y = nextY;
+          }
         }
 
         // B. Vision Cone Detection Checks
@@ -2344,7 +2411,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (offscreen) {
         ctx.drawImage(offscreen, 0, 0);
         // If mask level, draw the reveal mask on top of the masterpiece!
-        if (MASK_LEVELS.includes(painting.proceduralType) && revealCanvasRef.current) {
+        if (isRestorationLevel && revealCanvasRef.current) {
           ctx.drawImage(revealCanvasRef.current, 0, 0);
         }
       } else {
@@ -2354,6 +2421,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // Draw Exit Gate (Only if discovered!)
       const gate = exitGateRef.current;
+      const currentRestorationPct = Math.min(100, Math.round(restorationRateRef.current));
+      const restorationStatusText = lang === 'en'
+        ? `Restore artwork: ${currentRestorationPct}% / ${restorationTargetPercent}%`
+        : `画作复苏：${currentRestorationPct}% / ${restorationTargetPercent}%`;
+      const lockedObjectiveText = isRestorationLevel
+        ? `${CANVAS_TRANSLATIONS[lang].restoreArtwork} ${restorationTargetPercent}%`
+        : CANVAS_TRANSLATIONS[lang].collect3Orbs;
       if (gate.isDiscovered) {
         if (gate.isOpen) {
           // Glowing portal frame
@@ -2397,9 +2471,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.textAlign = 'center';
           if (gate.height > gate.width) {
             ctx.fillText(CANVAS_TRANSLATIONS[lang].locked, gate.x + gate.width / 2, gate.y + gate.height / 2 + 3);
-            ctx.fillText(CANVAS_TRANSLATIONS[lang].collect3Orbs, gate.x + gate.width / 2, gate.y + gate.height / 2 + 18);
+            ctx.fillText(lockedObjectiveText, gate.x + gate.width / 2, gate.y + gate.height / 2 + 18);
           } else {
-            ctx.fillText(`${CANVAS_TRANSLATIONS[lang].locked} (${CANVAS_TRANSLATIONS[lang].collect3Orbs})`, gate.x + gate.width / 2, gate.y + gate.height / 2 + 4);
+            ctx.fillText(`${CANVAS_TRANSLATIONS[lang].locked} (${lockedObjectiveText})`, gate.x + gate.width / 2, gate.y + gate.height / 2 + 4);
           }
         }
       }
@@ -2418,7 +2492,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.font = 'bold 22px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(CANVAS_TRANSLATIONS[lang].exploreGuide, WIDTH / 2, 15 + 48 / 2);
+        ctx.fillText(isRestorationLevel ? CANVAS_TRANSLATIONS[lang].exploreGuideRestore : CANVAS_TRANSLATIONS[lang].exploreGuide, WIDTH / 2, 15 + 48 / 2);
         ctx.restore();
       } else if (!gate.isOpen) {
         ctx.save();
@@ -2433,7 +2507,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.font = 'bold 22px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(CANVAS_TRANSLATIONS[lang].orbsGoalReached, WIDTH / 2, 15 + 48 / 2);
+        ctx.fillText(isRestorationLevel ? restorationStatusText : CANVAS_TRANSLATIONS[lang].orbsGoalReached, WIDTH / 2, 15 + 48 / 2);
         ctx.restore();
       } else {
         ctx.save();
@@ -2463,39 +2537,41 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       ctx.globalAlpha = 1.0; // reset
 
       // Draw Orbs
-      orbsRef.current.forEach(orb => {
-        if (!orb.collected) {
-          ctx.save();
-          ctx.shadowColor = orb.color;
-          ctx.shadowBlur = 12;
+      if (!isRestorationLevel) {
+        orbsRef.current.forEach(orb => {
+          if (!orb.collected) {
+            ctx.save();
+            ctx.shadowColor = orb.color;
+            ctx.shadowBlur = 12;
 
-          // Animated pulse ring
-          ctx.strokeStyle = orb.color;
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(orb.x, orb.y, orb.radius * orb.pulseScale * 1.3, 0, Math.PI * 2);
-          ctx.stroke();
+            // Animated pulse ring
+            ctx.strokeStyle = orb.color;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(orb.x, orb.y, orb.radius * orb.pulseScale * 1.3, 0, Math.PI * 2);
+            ctx.stroke();
 
-          // Central colored glass bead
-          const grad = ctx.createRadialGradient(
-            orb.x - orb.radius/3,
-            orb.y - orb.radius/3,
-            1,
-            orb.x,
-            orb.y,
-            orb.radius
-          );
-          grad.addColorStop(0, '#ffffff');
-          grad.addColorStop(0.4, orb.color);
-          grad.addColorStop(1, '#000000');
-          ctx.fillStyle = grad;
-          
-          ctx.beginPath();
-          ctx.arc(orb.x, orb.y, orb.radius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
-      });
+            // Central colored glass bead
+            const grad = ctx.createRadialGradient(
+              orb.x - orb.radius/3,
+              orb.y - orb.radius/3,
+              1,
+              orb.x,
+              orb.y,
+              orb.radius
+            );
+            grad.addColorStop(0, '#ffffff');
+            grad.addColorStop(0.4, orb.color);
+            grad.addColorStop(1, '#000000');
+            ctx.fillStyle = grad;
+
+            ctx.beginPath();
+            ctx.arc(orb.x, orb.y, orb.radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        });
+      }
 
       // Draw Guards & Vision Flashlights
       guardsRef.current.forEach(guard => {
@@ -3194,6 +3270,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const player = playerRef.current;
     player.targetColor = color;
     player.isPainted = true;
+    resetCamouflageTimer(player);
     setActiveColor(color);
 
     audio.playSplat();
@@ -3206,11 +3283,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const player = playerRef.current;
     player.targetColor = hex;
     player.isPainted = true;
+    resetCamouflageTimer(player);
     setActiveColor(hex);
 
     audio.playSplat();
     spawnSplatParticles(player.x, player.y, hex);
   };
+
+  const displayedRestorationRate = painting.proceduralType === 'sunflowers' ? sunflowerRevealRate : maskRevealRate;
+  const restorationProgressWidth = Math.min(100, (displayedRestorationRate / restorationTargetPercent) * 100);
 
   return (
     <div className="flex flex-col items-center w-full">
@@ -3234,27 +3315,44 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           </div>
         </div>
 
-        {/* Level Objectives: Orbs & Exit Status */}
+        {/* Level Objectives: Orbs/Restoration & Exit Status */}
         <div className="flex items-center gap-5">
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-white/50 tracking-wider font-serif">
-              {lang === 'en' ? 'COLOR FRAGMENTS' : 'FRAGMENTS / 碎片'}
-            </span>
-            <div className="flex gap-1.5">
-              {[0, 1, 2].map(idx => (
+          {isRestorationLevel ? (
+            <div className="flex items-center gap-2 min-w-[230px]">
+              <span className="text-xs text-white/50 tracking-wider font-serif">
+                {CANVAS_TRANSLATIONS[lang].restoration}
+              </span>
+              <div className="relative w-28 h-4 bg-black rounded overflow-hidden border border-white/10">
                 <div
-                  key={idx}
-                  className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                    idx < orbsCollected
-                      ? 'bg-[#c5a059] border-[#c5a059] text-black font-bold shadow-[0_0_8px_rgba(197,160,89,0.4)] scale-105'
-                      : 'bg-black/60 border-white/10 text-white/20'
-                  }`}
-                >
-                  <span className="text-[10px] font-serif">{idx < orbsCollected ? '✦' : '✧'}</span>
-                </div>
-              ))}
+                  className="h-full bg-gradient-to-r from-amber-600 to-[#c5a059] transition-all duration-300"
+                  style={{ width: `${restorationProgressWidth}%` }}
+                />
+                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
+                  {displayedRestorationRate}%/{restorationTargetPercent}%
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-white/50 tracking-wider font-serif">
+                {lang === 'en' ? 'COLOR FRAGMENTS' : 'FRAGMENTS / 碎片'}
+              </span>
+              <div className="flex gap-1.5">
+                {[0, 1, 2].map(idx => (
+                  <div
+                    key={idx}
+                    className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
+                      idx < orbsCollected
+                        ? 'bg-[#c5a059] border-[#c5a059] text-black font-bold shadow-[0_0_8px_rgba(197,160,89,0.4)] scale-105'
+                        : 'bg-black/60 border-white/10 text-white/20'
+                    }`}
+                  >
+                    <span className="text-[10px] font-serif">{idx < orbsCollected ? '✦' : '✧'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center gap-2">
             <span className="text-xs text-white/50 tracking-wider font-serif">
@@ -3290,7 +3388,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       </div>
 
       {/* Special mask level explanation banner */}
-      {MASK_LEVELS.includes(painting.proceduralType) && (
+      {isRestorationLevel && (
         <div className="w-full mb-4 bg-[#c5a059]/10 border border-[#c5a059]/30 text-[#c5a059] px-4 py-3 rounded-lg text-xs font-mono leading-relaxed flex items-start gap-3">
           <span className="text-base flex-shrink-0">{painting.proceduralType === 'sunflowers' ? '🌻' : '🎨'}</span>
           <div>
@@ -3303,11 +3401,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             <span>
               {painting.proceduralType === 'sunflowers'
                 ? (lang === 'en'
-                  ? 'The masterpiece starts covered in a white canvas! Move around or press Space / F (or click) to absorb the white background and scratch it off to reveal Van Gogh\'s Sunflowers underneath. Stand on revealed colors and absorb them to remain invisible!'
-                  : '向日葵画作开始时被白色画布完全遮挡！移动小人或按空格键/F键（或点击画面）可以吸走白底并揭露出向日葵原作。站在复苏的色彩上再次吸色，即可重新隐形！')
+                  ? `The masterpiece starts covered in a white canvas! Move around or press Space / F (or click) to scratch it off. Reach ${restorationTargetPercent}% restoration to open the exit; restored paint also blocks guard movement.`
+                  : `向日葵画作开始时被白色画布完全遮挡！移动小人或按空格键/F键（或点击画面）可以吸走白底。复苏达到 ${restorationTargetPercent}% 后出口开启；已复苏区域也会阻挡守卫移动。`)
                 : (lang === 'en'
-                  ? 'The masterpiece starts covered in a white canvas! Move around to scratch it off and reveal the artwork underneath. Collect the power-ups: ⏱️ Time Freeze, 🐸 Decoy Frog, 🎨 Palette Upgrade!'
-                  : '画作开始时被白色画布完全遮挡！移动小人擦除白底并揭示画作原作。收集道具：⏱️ 时间冻结、🐸 迷惑蛙、🎨 调色盘升级！')
+                  ? `The masterpiece starts covered in a white canvas! Restore ${restorationTargetPercent}% to open the exit. Restored paint becomes a guard barrier. Collect power-ups: ⏱️ Time Freeze, 🐸 Decoy Frog, 🎨 Palette Upgrade!`
+                  : `画作开始时被白色画布完全遮挡！复苏 ${restorationTargetPercent}% 后出口开启。已复苏区域会成为守卫无法穿过的屏障。收集道具：⏱️ 时间冻结、🐸 迷惑蛙、🎨 调色盘升级！`)
               }
             </span>
           </div>
@@ -3315,7 +3413,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       )}
 
       {/* Mask Level Real-time HUD Status */}
-      {MASK_LEVELS.includes(painting.proceduralType) && (
+      {isRestorationLevel && (
         <div className="w-full mb-4 bg-black/40 border border-white/10 rounded-xl p-4 flex flex-col gap-1.5">
           {/* Reveal rate */}
           <div className="w-full flex flex-col gap-1.5">
@@ -3325,19 +3423,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
                 {lang === 'en' ? 'ARTWORK RESTORATION' : '画作复苏率'}
               </span>
               <span className="font-mono font-bold text-[#c5a059]">
-                {painting.proceduralType === 'sunflowers' ? sunflowerRevealRate : maskRevealRate}% / 98%
+                {displayedRestorationRate}% / {restorationTargetPercent}%
               </span>
             </div>
             <div className="relative w-full h-3.5 bg-white/10 rounded-full overflow-hidden border border-white/5">
               <div
                 className="h-full bg-gradient-to-r from-amber-600 to-[#c5a059] transition-all duration-300"
-                style={{ width: `${((painting.proceduralType === 'sunflowers' ? sunflowerRevealRate : maskRevealRate) / 98) * 100}%` }}
+                style={{ width: `${restorationProgressWidth}%` }}
               />
             </div>
             <p className="text-[10px] text-white/50 italic font-sans">
               {lang === 'en'
-                ? '🎯 Reveal at least 98% of the white canvas to fully recover the masterpiece and pass!'
-                : '🎯 至少复苏 98% 的画布即可唤醒整幅神作并获得胜利！'}
+                ? `🎯 Restore at least ${restorationTargetPercent}% of the canvas to unlock the exit, then step through the portal!`
+                : `🎯 至少复苏 ${restorationTargetPercent}% 的画布即可开启出口，然后进入传送门逃出！`}
             </p>
           </div>
         </div>

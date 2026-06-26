@@ -3,12 +3,82 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { PaintingData, LevelDifficulty } from '../types';
 import { GameCanvas } from './GameCanvas';
 import { ProceduralArtThumbnail } from './ProceduralArtThumbnail';
 import { audio } from './AudioEngine';
-import { Play, RotateCcw, Volume2, VolumeX, HelpCircle, Award, Trophy, ArrowRight, CheckCircle2, AlertTriangle, Sparkles, BookOpen } from 'lucide-react';
+import { Play, RotateCcw, Volume2, VolumeX, HelpCircle, Award, Trophy, ArrowRight, CheckCircle2, AlertTriangle, Sparkles, BookOpen, Lock } from 'lucide-react';
+
+type GameState = 'welcome' | 'playing' | 'cleared' | 'failed' | 'victory';
+
+interface GalleryStats {
+  levelsCleared: number;
+  timesSpotted: number;
+  secondsPlayed: number;
+}
+
+interface GallerySave {
+  version: 1;
+  levelIndex: number;
+  gameState: GameState;
+  stats: GalleryStats;
+  lang: 'zh' | 'en';
+  isMuted: boolean;
+  unlockedLevelCount: number;
+  updatedAt: string;
+}
+
+const SAVE_KEY = 'chameleon-save-v1';
+const DEFAULT_STATS: GalleryStats = {
+  levelsCleared: 0,
+  timesSpotted: 0,
+  secondsPlayed: 0,
+};
+
+const isGameState = (value: unknown): value is GameState => (
+  value === 'welcome' ||
+  value === 'playing' ||
+  value === 'cleared' ||
+  value === 'failed' ||
+  value === 'victory'
+);
+
+const readSavedGame = (): GallerySave | null => {
+  if (typeof window === 'undefined') return null;
+
+  try {
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<GallerySave>;
+    if (parsed.version !== 1 || !isGameState(parsed.gameState)) return null;
+
+    const levelIndex = Number.isInteger(parsed.levelIndex) ? parsed.levelIndex! : 0;
+    const stats = parsed.stats || DEFAULT_STATS;
+    const levelsCleared = Number.isFinite(stats.levelsCleared) ? stats.levelsCleared : 0;
+    const unlockedLevelCount = Number.isInteger(parsed.unlockedLevelCount)
+      ? parsed.unlockedLevelCount!
+      : levelsCleared + 1;
+
+    return {
+      version: 1,
+      levelIndex,
+      gameState: parsed.gameState,
+      stats: {
+        levelsCleared,
+        timesSpotted: Number.isFinite(stats.timesSpotted) ? stats.timesSpotted : 0,
+        secondsPlayed: Number.isFinite(stats.secondsPlayed) ? stats.secondsPlayed : 0,
+      },
+      lang: parsed.lang === 'en' ? 'en' : 'zh',
+      isMuted: parsed.isMuted === true,
+      unlockedLevelCount,
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch (error) {
+    return null;
+  }
+};
 
 const PAINTINGS_GALLERY: PaintingData[] = [
   {
@@ -146,6 +216,7 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     guardCount: 5,
     guardSpeed: 1.5,
     visionRange: 195,
+    restorationTargetPercent: 98,
     proceduralType: 'sunflowers',
     palette: [
       { name: '花芯棕褐 (Ochre Brown)', nameEn: 'Ochre Seed Center', hex: '#795548' },
@@ -186,14 +257,15 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     artist: '古斯塔夫·克里姆特',
     artistEn: 'Gustav Klimt',
     year: '1908',
-    description: '克里姆特的黄金巅峰杰作，整幅画布缀满了斑斓细碎的抽象几何色块和耀眼的金箔！本关开始时被完全遮盖，只有解锁 98% 进度让名画复苏后才能激活随机大门逃出！',
-    descriptionEn: 'Klimt\'s golden masterpiece, embellished with shimmering geometric patches and brilliant gold leaf! The canvas is initially covered: scratch off 98% of the white canvas to recover the painting and reveal the exit portal!',
+    description: '克里姆特的黄金巅峰杰作，整幅画布缀满了斑斓细碎的抽象几何色块和耀眼的金箔！本关开始时被完全遮盖，复苏 40% 进度后即可激活随机大门逃出！',
+    descriptionEn: 'Klimt\'s golden masterpiece, embellished with shimmering geometric patches and brilliant gold leaf! The canvas is initially covered: restore 40% of the painting to unlock the exit portal!',
     url: 'https://images.unsplash.com/photo-1579783928621-7a13d66a62d1?q=80&w=800&auto=format&fit=crop',
     difficulty: '大师',
     backgroundColor: 'bg-amber-950/40',
     guardCount: 5,
     guardSpeed: 1.5,
     visionRange: 195,
+    restorationTargetPercent: 40,
     proceduralType: 'thekiss',
     palette: [
       { name: '黄金之海 (Gold)', nameEn: 'Golden Leaf', hex: '#d4af37' },
@@ -210,14 +282,15 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     artist: '桑德罗·波提切利',
     artistEn: 'Sandro Botticelli',
     year: '1486',
-    description: '波提切利的文艺复兴巅峰巨制，柔和的海风、巨大的粉红贝壳和飘零的玫瑰花瓣构成了极致优雅的唯美画面。本关同样为遮盖色彩复苏玩法，警惕 5 名极速变线的高警惕安保！',
-    descriptionEn: 'Botticelli\'s Renaissance masterpiece capturing wind ripples, a colossal scallop shell, and drifting pink petals. Recover 98% of this elegant sea canvas to trigger the exit door while dodging 5 agile guards.',
+    description: '波提切利的文艺复兴巅峰巨制，柔和的海风、巨大的粉红贝壳和飘零的玫瑰花瓣构成了极致优雅的唯美画面。本关同样为遮盖色彩复苏玩法，复苏 50% 后开启出口，警惕 5 名极速变线的高警惕安保！',
+    descriptionEn: 'Botticelli\'s Renaissance masterpiece capturing wind ripples, a colossal scallop shell, and drifting pink petals. Recover 50% of this elegant sea canvas to trigger the exit door while dodging 5 agile guards.',
     url: 'https://images.unsplash.com/photo-1581291518633-83b4ebd1d83e?q=80&w=800&auto=format&fit=crop',
     difficulty: '大师',
     backgroundColor: 'bg-teal-950/40',
     guardCount: 5,
     guardSpeed: 1.55,
     visionRange: 200,
+    restorationTargetPercent: 50,
     proceduralType: 'venus',
     palette: [
       { name: '维纳斯肤 (Venus Flesh)', nameEn: 'Delicate Skin', hex: '#ffebee' },
@@ -234,14 +307,15 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     artist: '欧仁·德拉克罗瓦',
     artistEn: 'Eugène Delacroix',
     year: '1830',
-    description: '表现浪漫主义史诗般宏大革命场景的名画。硝烟滚滚的战场，迎风挥舞的三色国旗。超高警卫巡逻网，面对极其强烈的红蓝白和硝烟泥色冲突，吸色复苏 98% 方可开启随机大门！',
-    descriptionEn: 'A romantic epic capturing the smoke of battle and the tricolor flag. Navigate a tight 6-guard grid, shifting dynamically between democratic blues, revolutionary reds, and dusty smoke. 98% recovery required.',
+    description: '表现浪漫主义史诗般宏大革命场景的名画。硝烟滚滚的战场，迎风挥舞的三色国旗。超高警卫巡逻网，面对极其强烈的红蓝白和硝烟泥色冲突，吸色复苏 60% 方可开启随机大门！',
+    descriptionEn: 'A romantic epic capturing the smoke of battle and the tricolor flag. Navigate a tight 6-guard grid, shifting dynamically between democratic blues, revolutionary reds, and dusty smoke. 60% recovery required.',
     url: 'https://images.unsplash.com/photo-1541701494587-cb58502866ab?q=80&w=800&auto=format&fit=crop',
     difficulty: '噩梦',
     backgroundColor: 'bg-stone-900/50',
     guardCount: 6,
     guardSpeed: 1.6,
     visionRange: 200,
+    restorationTargetPercent: 60,
     proceduralType: 'liberty',
     palette: [
       { name: '自由之赤 (Liberty Red)', nameEn: 'Revolutionary Red', hex: '#c53030' },
@@ -258,14 +332,15 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     artist: '萨尔瓦多·达利',
     artistEn: 'Salvador Dalí',
     year: '1931',
-    description: '达利超现实主义代表作，歪曲融化的怀表、枯萎的橄榄树和泛着诡异蓝光的卡达克斯海岸。在此幻梦场景中，你需要避开 6 名全方位扫描的红外手电警卫，复苏 98% 的神秘梦境！',
-    descriptionEn: 'Dalí\'s surreal masterpiece features melting watches, a withered olive branch, and eerie coastal blues. Dodge 6 high-vigilance guards scanning in every direction while restoring 98% of this bizarre landscape.',
+    description: '达利超现实主义代表作，歪曲融化的怀表、枯萎的橄榄树和泛着诡异蓝光的卡达克斯海岸。在此幻梦场景中，你需要避开 6 名全方位扫描的红外手电警卫，复苏 75% 的神秘梦境！',
+    descriptionEn: 'Dalí\'s surreal masterpiece features melting watches, a withered olive branch, and eerie coastal blues. Dodge 6 high-vigilance guards scanning in every direction while restoring 75% of this bizarre landscape.',
     url: 'https://images.unsplash.com/photo-1518640467707-6811f4a6ab73?q=80&w=800&auto=format&fit=crop',
     difficulty: '噩梦',
     backgroundColor: 'bg-yellow-950/30',
     guardCount: 6,
     guardSpeed: 1.65,
     visionRange: 205,
+    restorationTargetPercent: 75,
     proceduralType: 'persistence',
     palette: [
       { name: '荒漠暖黄 (Desert Sand)', nameEn: 'Warm Desert Sand', hex: '#e2b36e' },
@@ -282,14 +357,15 @@ const PAINTINGS_GALLERY: PaintingData[] = [
     artist: '文森特·梵高',
     artistEn: 'Vincent van Gogh',
     year: '1888',
-    description: '文森特·梵高在阿尔勒创作的传世杰作。深邃高贵的幽蓝星空与露台温暖夺目的明黄色灯光产生极致强烈的冷暖对撞。在 6 名顶配警卫的探照网中，潜行复苏 98% 的星夜露台吧！',
-    descriptionEn: 'Van Gogh\'s masterpiece in Arles contrasting deep cobalt skies with warm yellow café lamps. Dodge 6 supreme guards and recover 98% of this iconic starry terrace to unlock the escape portal!',
+    description: '文森特·梵高在阿尔勒创作的传世杰作。深邃高贵的幽蓝星空与露台温暖夺目的明黄色灯光产生极致强烈的冷暖对撞。在 6 名顶配警卫的探照网中，潜行复苏 90% 的星夜露台吧！',
+    descriptionEn: 'Van Gogh\'s masterpiece in Arles contrasting deep cobalt skies with warm yellow café lamps. Dodge 6 supreme guards and recover 90% of this iconic starry terrace to unlock the escape portal!',
     url: 'https://images.unsplash.com/photo-1549887534-1541e9326642?q=80&w=800&auto=format&fit=crop',
     difficulty: '噩梦',
     backgroundColor: 'bg-blue-950/50',
     guardCount: 6,
     guardSpeed: 1.7,
     visionRange: 210,
+    restorationTargetPercent: 90,
     proceduralType: 'cafeterrace',
     palette: [
       { name: '露台暖金 (Cafe Gold)', nameEn: 'Terrace Amber Gold', hex: '#ffc107' },
@@ -308,8 +384,8 @@ const TRANSLATIONS = {
     exhibitionHeading: '🏛️ 艺术馆展厅 · 关卡选择 EXHIBITION GALLERIES',
     title: '艺术变色龙：隐蔽突袭',
     subtitle: 'ART CHAMELEON: COVERT CAMOUFLAGE',
-    intro: '化身拥有变色天赋的黏土小人，避开巡逻警卫的手电筒探照灯，在名画中收集能量球，通关达成艺术修复！',
-    rule1: '使用 W/A/S/D 移动并收集3个能量球',
+    intro: '化身拥有变色天赋的黏土小人，避开巡逻警卫的手电筒探照灯，在名画中收集能量球或复苏画作，逃出展厅完成艺术修复！',
+    rule1: '使用 W/A/S/D 移动，普通关收集能量球，复苏关恢复画作',
     rule2: '按 空格 / F键 吸色伪装 (持续6秒)',
     rule3: '警卫靠近时 保持绝对静止 寻找隐藏出口',
     stealthGuide: '隐藏指南 STEALTH GUIDE',
@@ -342,7 +418,7 @@ const TRANSLATIONS = {
     guidePoint3: '颜色匹配：',
     guidePoint3Desc: '若身上的颜色与脚下背景色相差过大，即使你保持静止，警惕值也会缓慢上升。',
     guidePoint4: '逃离名画：',
-    guidePoint4Desc: '收集齐全幅名画的 3 个能量球后，走入解锁的隐藏出口大门通关。',
+    guidePoint4Desc: '普通关收集齐 3 个能量球开门；复苏关达到画作复苏目标后开门，然后走入出口通关。',
     quote: '“艺术是隐藏自我的最高境界，当你成为色彩的一部分，你就成为了不朽。”',
     difficultyBadge: {
       '简单': '简单 ✦',
@@ -376,8 +452,8 @@ const TRANSLATIONS = {
     exhibitionHeading: '🏛️ EXHIBITION GALLERIES · SELECT PAINTING',
     title: 'Art Chameleon: Covert Camouflage',
     subtitle: 'ART CHAMELEON: COVERT CAMOUFLAGE',
-    intro: 'Play as a clay figure with ultimate color-matching talent. Avoid patrol guard searchlights, collect energy shards inside masterpieces, and escape to restore the arts!',
-    rule1: 'Use W/A/S/D to move & collect 3 energy orbs',
+    intro: 'Play as a clay figure with ultimate color-matching talent. Avoid patrol guard searchlights, collect energy shards or restore covered masterpieces, then escape to complete the restoration!',
+    rule1: 'Use W/A/S/D to move, collect orbs in classic levels, and restore covered artworks in restoration levels',
     rule2: 'Press SPACE / F to absorb background color (lasts 6s)',
     rule3: 'Stay absolutely still when guards scan you, then find the exit',
     stealthGuide: 'STEALTH GUIDE',
@@ -410,7 +486,7 @@ const TRANSLATIONS = {
     guidePoint3: 'Color Matching:',
     guidePoint3Desc: 'If your camouflage color doesn\'t match the floor color, the guards\' alertness will slowly rise even if you are stationary.',
     guidePoint4: 'Masterpiece Escape:',
-    guidePoint4Desc: 'Once you collect all 3 energy orbs, walk into the golden exit portal to escape and complete the restoration.',
+    guidePoint4Desc: 'Classic levels open after 3 energy orbs; restoration levels open after the target artwork recovery, then you must enter the portal.',
     quote: '"Art is the highest realm of hiding oneself; when you become part of the color, you become immortal."',
     difficultyBadge: {
       '简单': 'Easy ✦',
@@ -441,19 +517,27 @@ const TRANSLATIONS = {
 };
 
 export const MuseumGallery: React.FC = () => {
-  const [lang, setLang] = useState<'zh' | 'en'>('zh');
-  const [activePainting, setActivePainting] = useState<PaintingData>(PAINTINGS_GALLERY[0]);
-  const [gameState, setGameState] = useState<'welcome' | 'playing' | 'cleared' | 'failed' | 'victory'>('welcome');
-  const [levelIndex, setLevelIndex] = useState(0);
-  const [isMuted, setIsMuted] = useState(false);
+  const [initialSave] = useState<GallerySave | null>(() => readSavedGame());
+  const skipNextSaveRef = useRef(false);
+  const initialUnlockedLevelCount = Math.max(
+    1,
+    Math.min(PAINTINGS_GALLERY.length, initialSave?.unlockedLevelCount ?? 1)
+  );
+  const savedLevelIndex = initialSave?.levelIndex ?? 0;
+  const isSavedLevelUnlocked = savedLevelIndex >= 0 && savedLevelIndex < initialUnlockedLevelCount;
+  const initialLevelIndex = isSavedLevelUnlocked
+    ? Math.max(0, Math.min(PAINTINGS_GALLERY.length - 1, savedLevelIndex))
+    : 0;
+  const [lang, setLang] = useState<'zh' | 'en'>(initialSave?.lang ?? 'zh');
+  const [activePainting, setActivePainting] = useState<PaintingData>(PAINTINGS_GALLERY[initialLevelIndex]);
+  const [gameState, setGameState] = useState<GameState>(isSavedLevelUnlocked ? (initialSave?.gameState ?? 'welcome') : 'welcome');
+  const [levelIndex, setLevelIndex] = useState(initialLevelIndex);
+  const [isMuted, setIsMuted] = useState(initialSave?.isMuted ?? false);
   const [failReason, setFailReason] = useState('');
+  const [unlockedLevelCount, setUnlockedLevelCount] = useState(initialUnlockedLevelCount);
   
   // Stats
-  const [stats, setStats] = useState({
-    levelsCleared: 0,
-    timesSpotted: 0,
-    secondsPlayed: 0,
-  });
+  const [stats, setStats] = useState<GalleryStats>(initialSave?.stats ?? DEFAULT_STATS);
 
   const [activeTab, setActiveTab] = useState<'game' | 'history'>('game');
 
@@ -468,6 +552,33 @@ export const MuseumGallery: React.FC = () => {
     return () => clearInterval(interval);
   }, [gameState]);
 
+  // Restore saved audio preference and keep it in sync with the UI state.
+  useEffect(() => {
+    audio.setMute(isMuted);
+  }, [isMuted]);
+
+  // Autosave a checkpoint-level snapshot. Per-frame canvas and guard state stay transient.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (skipNextSaveRef.current) {
+      skipNextSaveRef.current = false;
+      return;
+    }
+
+    const save: GallerySave = {
+      version: 1,
+      levelIndex,
+      gameState,
+      stats,
+      lang,
+      isMuted,
+      unlockedLevelCount,
+      updatedAt: new Date().toISOString(),
+    };
+
+    window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
+  }, [gameState, isMuted, lang, levelIndex, stats, unlockedLevelCount]);
+
   // Handle auto-bg music trigger
   useEffect(() => {
     if (gameState === 'playing') {
@@ -479,6 +590,8 @@ export const MuseumGallery: React.FC = () => {
   }, [gameState]);
 
   const handleStartGame = (painting: PaintingData, idx: number) => {
+    if (idx >= unlockedLevelCount) return;
+
     setActivePainting(painting);
     setLevelIndex(idx);
     setGameState('playing');
@@ -487,7 +600,8 @@ export const MuseumGallery: React.FC = () => {
   };
 
   const handleLevelCleared = () => {
-    setStats(prev => ({ ...prev, levelsCleared: prev.levelsCleared + 1 }));
+    setStats(prev => ({ ...prev, levelsCleared: Math.max(prev.levelsCleared, levelIndex + 1) }));
+    setUnlockedLevelCount(prev => Math.min(PAINTINGS_GALLERY.length, Math.max(prev, levelIndex + 2)));
     
     // Check if there is a next level
     if (levelIndex < PAINTINGS_GALLERY.length - 1) {
@@ -517,6 +631,19 @@ export const MuseumGallery: React.FC = () => {
   const handleToggleMute = () => {
     const muted = audio.toggleMute();
     setIsMuted(muted);
+  };
+
+  const handleResetGallery = () => {
+    skipNextSaveRef.current = true;
+    if (typeof window !== 'undefined') {
+      window.localStorage.removeItem(SAVE_KEY);
+    }
+    setStats(DEFAULT_STATS);
+    setUnlockedLevelCount(1);
+    setLevelIndex(0);
+    setActivePainting(PAINTINGS_GALLERY[0]);
+    setFailReason('');
+    setGameState('welcome');
   };
 
   const getDifficultyBadge = (diff: LevelDifficulty) => {
@@ -630,7 +757,7 @@ export const MuseumGallery: React.FC = () => {
               <div className="flex items-center gap-3">
                 <span className="w-6 h-6 rounded-full bg-[#c5a059] text-black text-xs font-bold flex items-center justify-center font-mono">1</span>
                 <span className="text-xs text-white font-medium">
-                  {lang === 'zh' ? '使用 ' : 'Use '}<strong className="text-[#c5a059]">W/A/S/D</strong>{lang === 'zh' ? ' 移动并收集3个能量球' : ' to move & collect 3 energy orbs'}
+                  {lang === 'zh' ? '使用 ' : 'Use '}<strong className="text-[#c5a059]">W/A/S/D</strong>{lang === 'zh' ? ' 移动；普通关吃球，复苏关恢复画作' : ' to move; collect orbs or restore artworks'}
                 </span>
               </div>
               <div className="w-px h-6 bg-white/10 hidden sm:block" />
@@ -659,23 +786,45 @@ export const MuseumGallery: React.FC = () => {
                   const pName = lang === 'en' ? (p.nameEn || p.name) : p.name;
                   const pArtist = lang === 'en' ? (p.artistEn || p.artist) : p.artist;
                   const pDesc = lang === 'en' ? (p.descriptionEn || p.description) : p.description;
+                  const isUnlocked = idx < unlockedLevelCount;
+                  const isCleared = idx < Math.max(0, unlockedLevelCount - 1);
 
                   return (
                     <div
                       key={p.id}
-                      className="bg-[#151515] border border-white/10 rounded-lg overflow-hidden hover:border-[#c5a059]/50 transition-all duration-300 hover:shadow-[0_0_25px_rgba(197,160,89,0.15)] hover:-translate-y-1 flex flex-col"
+                      className={`bg-[#151515] border rounded-lg overflow-hidden transition-all duration-300 flex flex-col ${
+                        isUnlocked
+                          ? 'border-white/10 hover:border-[#c5a059]/50 hover:shadow-[0_0_25px_rgba(197,160,89,0.15)] hover:-translate-y-1'
+                          : 'border-white/5 opacity-55 grayscale'
+                      }`}
                     >
                       {/* Art preview frame */}
                       <div className="h-44 bg-black relative overflow-hidden group flex items-center justify-center">
                         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent z-1" />
                         <ProceduralArtThumbnail
                           type={p.proceduralType}
-                          className="opacity-75 group-hover:scale-105 transition-transform duration-500"
+                          className={`opacity-75 transition-transform duration-500 ${isUnlocked ? 'group-hover:scale-105' : ''}`}
                         />
                         {/* Difficulty overlay */}
                         <div className="absolute top-3 right-3 z-10">
                           {getDifficultyBadge(p.difficulty)}
                         </div>
+                        {isCleared && (
+                          <div className="absolute top-3 left-3 z-10 px-2 py-1 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-700 text-[10px] font-mono font-bold uppercase tracking-wider flex items-center gap-1">
+                            <CheckCircle2 size={12} /> {lang === 'en' ? 'CLEARED' : '已通关'}
+                          </div>
+                        )}
+                        {!isUnlocked && (
+                          <div className="absolute inset-0 z-20 bg-black/65 backdrop-blur-[1px] flex flex-col items-center justify-center text-center px-4">
+                            <Lock size={26} className="text-[#c5a059] mb-2" />
+                            <p className="text-[#c5a059] text-[11px] font-mono font-bold uppercase tracking-widest">
+                              {lang === 'en' ? 'LOCKED' : '未解锁'}
+                            </p>
+                            <p className="text-white/55 text-[10px] mt-1">
+                              {lang === 'en' ? 'Clear the previous artwork first' : '通关上一幅名画后解锁'}
+                            </p>
+                          </div>
+                        )}
                         <div className="absolute bottom-3 left-3 z-10 font-serif">
                           <p className="text-[#c5a059] text-[10px] tracking-widest uppercase font-mono">{pArtist}</p>
                           <h4 className="text-base font-bold text-white leading-tight italic">{pName}</h4>
@@ -701,9 +850,18 @@ export const MuseumGallery: React.FC = () => {
                         {/* Play action */}
                         <button
                           onClick={() => handleStartGame(p, idx)}
-                          className="w-full py-2 bg-[#c5a059] hover:bg-[#d4b06d] text-black font-bold text-xs uppercase tracking-widest rounded transition-all duration-200 flex items-center justify-center gap-1.5 shadow"
+                          disabled={!isUnlocked}
+                          aria-disabled={!isUnlocked}
+                          className={`w-full py-2 font-bold text-xs uppercase tracking-widest rounded transition-all duration-200 flex items-center justify-center gap-1.5 shadow ${
+                            isUnlocked
+                              ? 'bg-[#c5a059] hover:bg-[#d4b06d] text-black'
+                              : 'bg-black/50 text-white/30 border border-white/10 cursor-not-allowed'
+                          }`}
                         >
-                          <Play size={12} /> {TRANSLATIONS[lang].enterGallery}
+                          {isUnlocked ? <Play size={12} /> : <Lock size={12} />}
+                          {isUnlocked
+                            ? TRANSLATIONS[lang].enterGallery
+                            : (lang === 'en' ? 'LOCKED' : '未解锁')}
                         </button>
                       </div>
                     </div>
@@ -864,10 +1022,7 @@ export const MuseumGallery: React.FC = () => {
 
               <div className="flex gap-4">
                 <button
-                  onClick={() => {
-                    setStats({ levelsCleared: 0, timesSpotted: 0, secondsPlayed: 0 });
-                    setGameState('welcome');
-                  }}
+                  onClick={handleResetGallery}
                   className="w-full py-3 bg-[#c5a059] hover:bg-[#d4b06d] text-black font-bold uppercase tracking-wider rounded-md transition-all shadow-md flex items-center justify-center gap-1.5 text-sm"
                 >
                   {TRANSLATIONS[lang].victoryReset}

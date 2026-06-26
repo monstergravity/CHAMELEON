@@ -78,6 +78,7 @@ export interface PaintingData {
   guardCount: number;
   guardSpeed: number;
   visionRange: number;
+  restorationTargetPercent?: number; // Optional target for mask-restoration levels
   proceduralType: 'monalisa' | 'starrynight' | 'scream' | 'greatwave' | 'pearlearring' | 'sunflowers' | 'waterlilies' | 'thekiss' | 'venus' | 'liberty' | 'persistence' | 'cafeterrace';
 }
 
