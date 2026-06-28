@@ -1023,6 +1023,57 @@ export const ProceduralArtThumbnail: React.FC<ProceduralArtThumbnailProps> = ({ 
       ctx.beginPath();
       ctx.ellipse(575, 330, 85, 24, -0.2, 0, Math.PI * 2);
       ctx.fill();
+    } else if (type === 'chromamap') {
+      const bg = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      bg.addColorStop(0, '#070712');
+      bg.addColorStop(0.55, '#171326');
+      bg.addColorStop(1, '#08131f');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      const colors = ['#7c3aed', '#0891b2', '#db2777', '#84cc16', '#facc15', '#f97316', '#14b8a6', '#4f46e5'];
+      for (let i = 0; i < 42; i++) {
+        const seedA = Math.sin(i * 19.91) * 10000;
+        const seedB = Math.sin(i * 37.17 + 4.2) * 10000;
+        const cx = 45 + (seedA - Math.floor(seedA)) * (WIDTH - 90);
+        const cy = 40 + (seedB - Math.floor(seedB)) * (HEIGHT - 80);
+        const radiusX = 45 + ((Math.sin(i * 11.3) + 1) * 0.5) * 62;
+        const radiusY = 34 + ((Math.cos(i * 9.7) + 1) * 0.5) * 52;
+        const points = 8 + (i % 5);
+        ctx.save();
+        ctx.globalAlpha = 0.74;
+        ctx.fillStyle = colors[i % colors.length];
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        for (let p = 0; p < points; p++) {
+          const angle = (p / points) * Math.PI * 2;
+          const wobble = 0.68 + ((Math.sin(i * 5.31 + p * 2.17) + 1) * 0.5) * 0.52;
+          const x = cx + Math.cos(angle) * radiusX * wobble;
+          const y = cy + Math.sin(angle) * radiusY * wobble;
+          if (p === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      [
+        { x: WIDTH * 0.25, y: HEIGHT * 0.24, r: 34, c: '#facc15' },
+        { x: WIDTH * 0.68, y: HEIGHT * 0.30, r: 38, c: '#22d3ee' },
+        { x: WIDTH * 0.52, y: HEIGHT * 0.72, r: 36, c: '#fb7185' },
+      ].forEach(zone => {
+        const glow = ctx.createRadialGradient(zone.x, zone.y, 4, zone.x, zone.y, zone.r * 1.8);
+        glow.addColorStop(0, `${zone.c}99`);
+        glow.addColorStop(0.55, `${zone.c}30`);
+        glow.addColorStop(1, `${zone.c}00`);
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(zone.x, zone.y, zone.r * 1.8, 0, Math.PI * 2);
+        ctx.fill();
+      });
     }
 
     ctx.restore();

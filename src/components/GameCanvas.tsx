@@ -153,8 +153,22 @@ interface DecoyEntity {
   pulseTime: number; // animation
 }
 
+interface TerritoryHotZone {
+  x: number;
+  y: number;
+  radius: number;
+  color: string;
+  claimedBy?: DuelPlayerId;
+}
+
+interface TerritoryComboState {
+  ownerId: DuelPlayerId | null;
+  count: number;
+  timer: number;
+}
+
 // Mask restoration levels. Level 7 (waterlilies) intentionally stays on the classic orb loop.
-const MASK_LEVELS = ['sunflowers', 'thekiss', 'venus', 'liberty', 'persistence', 'cafeterrace', 'earthlydelights', 'temeraire', 'grandjatte', 'composition8', 'boogiewoogie', 'redstudio'] as const;
+const MASK_LEVELS = ['sunflowers', 'thekiss', 'venus', 'liberty', 'persistence', 'cafeterrace', 'earthlydelights', 'temeraire', 'grandjatte', 'composition8', 'boogiewoogie', 'redstudio', 'chromamap'] as const;
 const DEFAULT_RESTORATION_TARGET_PERCENT = 98;
 const DUEL_DURATION_SECONDS = 90;
 const DUEL_TRAP_SECONDS = 0.75;
@@ -162,6 +176,14 @@ const DUEL_RESPAWN_SECONDS = 2.0;
 const DUEL_GHOST_SECONDS = 2.0;
 const DUEL_GRID_COLUMNS = 80;
 const DUEL_GRID_ROWS = 50;
+const DUEL_TERRITORY_COLUMNS = 110;
+const DUEL_TERRITORY_ROWS = 70;
+const LARGE_TERRITORY_COLUMNS = 140;
+const LARGE_TERRITORY_ROWS = 90;
+const DUEL_INITIAL_TERRITORY_RADIUS_CELLS = 4;
+const LARGE_INITIAL_TERRITORY_RADIUS_CELLS = 5;
+const DUEL_MIN_FILL_CELLS = 8;
+const LARGE_MIN_FILL_CELLS = 12;
 type DuelPlayerId = 1 | 2;
 
 interface DuelPlayer extends Player {
@@ -187,8 +209,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   lang = 'en',
 }) => {
   const isRestorationLevel = MASK_LEVELS.includes(painting.proceduralType as (typeof MASK_LEVELS)[number]);
+  const isTerritoryMap = painting.territoryMap === true;
   const isLocalDuel = mode === 'local-duel' && isRestorationLevel;
+  const usesTerritoryGameplay = isLocalDuel || isTerritoryMap;
   const restorationTargetPercent = painting.restorationTargetPercent ?? DEFAULT_RESTORATION_TARGET_PERCENT;
+  const duelDurationSeconds = painting.duelDurationSeconds ?? DUEL_DURATION_SECONDS;
+  const territoryColumns = isTerritoryMap ? LARGE_TERRITORY_COLUMNS : DUEL_TERRITORY_COLUMNS;
+  const territoryRows = isTerritoryMap ? LARGE_TERRITORY_ROWS : DUEL_TERRITORY_ROWS;
+  const territoryCellCount = territoryColumns * territoryRows;
+  const initialTerritoryRadiusCells = isTerritoryMap ? LARGE_INITIAL_TERRITORY_RADIUS_CELLS : DUEL_INITIAL_TERRITORY_RADIUS_CELLS;
+  const minFillCells = isTerritoryMap ? LARGE_MIN_FILL_CELLS : DUEL_MIN_FILL_CELLS;
+  const duelDurationLabel = lang === 'en'
+    ? (duelDurationSeconds >= 120 ? `${Math.round(duelDurationSeconds / 60)} minutes` : `${duelDurationSeconds} seconds`)
+    : (duelDurationSeconds >= 120 ? `${Math.round(duelDurationSeconds / 60)}分钟` : `${duelDurationSeconds}秒`);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const offscreenCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const revealCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -224,13 +257,29 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   // Keyboard controls
   const keysPressed = useRef<{ [key: string]: boolean }>({});
+  const touchMovementRef = useRef({
+    active: false,
+    pointerId: null as number | null,
+    startX: 0,
+    startY: 0,
+    dx: 0,
+    dy: 0,
+  });
+  const [touchStickVisual, setTouchStickVisual] = useState({ active: false, x: 0, y: 0 });
+  const [touchActionActive, setTouchActionActive] = useState(false);
 
   // Elements
   const guardsRef = useRef<Guard[]>([]);
   const orbsRef = useRef<ColorOrb[]>([]);
   const duelPlayersRef = useRef<DuelPlayer[]>([]);
   const restorationOwnerRef = useRef<Uint8Array>(new Uint8Array(WIDTH * HEIGHT));
+  const territoryGridRef = useRef<Uint8Array>(new Uint8Array(DUEL_TERRITORY_COLUMNS * DUEL_TERRITORY_ROWS));
+  const trailGridRef = useRef<Uint8Array>(new Uint8Array(DUEL_TERRITORY_COLUMNS * DUEL_TERRITORY_ROWS));
+  const activeTrailsRef = useRef<Record<DuelPlayerId, Position[]>>({ 1: [], 2: [] });
+  const lastTrailCellRef = useRef<Record<DuelPlayerId, number>>({ 1: -1, 2: -1 });
   const duelElapsedRef = useRef<number>(0);
+  const territoryHotZonesRef = useRef<TerritoryHotZone[]>([]);
+  const territoryComboRef = useRef<TerritoryComboState>({ ownerId: null, count: 0, timer: 0 });
   const exitGateRef = useRef<ExitGate>({
     x: WIDTH - 60,
     y: HEIGHT / 2 - 40,
@@ -325,13 +374,19 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     setIsExitOpen(false);
     setIsExitDiscovered(false);
     setAlertLevel(0);
-    setDuelTimeLeft(DUEL_DURATION_SECONDS);
+    setDuelTimeLeft(duelDurationSeconds);
     setDuelScores({ p1: 0, p2: 0 });
     setDuelDeaths({ p1: 0, p2: 0 });
     setDuelMessage('');
     duelElapsedRef.current = 0;
     duelPlayersRef.current = createDuelPlayers();
     restorationOwnerRef.current = new Uint8Array(WIDTH * HEIGHT);
+    territoryGridRef.current = new Uint8Array(territoryCellCount);
+    trailGridRef.current = new Uint8Array(territoryCellCount);
+    activeTrailsRef.current = { 1: [], 2: [] };
+    lastTrailCellRef.current = { 1: -1, 2: -1 };
+    territoryHotZonesRef.current = isTerritoryMap ? createTerritoryHotZones() : [];
+    territoryComboRef.current = { ownerId: null, count: 0, timer: 0 };
     ownerOverlayCanvasRef.current = null;
 
     // Initialize player
@@ -623,15 +678,20 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       rCanvas.height = HEIGHT;
       const rCtx = rCanvas.getContext('2d');
       if (rCtx) {
-        rCtx.fillStyle = '#ffffff';
-        rCtx.fillRect(0, 0, WIDTH, HEIGHT);
+        if (!isTerritoryMap) {
+          rCtx.fillStyle = '#ffffff';
+          rCtx.fillRect(0, 0, WIDTH, HEIGHT);
+        } else {
+          rCtx.clearRect(0, 0, WIDTH, HEIGHT);
+        }
       }
       revealCanvasRef.current = rCanvas;
-      if (isLocalDuel) {
+      if (usesTerritoryGameplay) {
         const ownerCanvas = document.createElement('canvas');
         ownerCanvas.width = WIDTH;
         ownerCanvas.height = HEIGHT;
         ownerOverlayCanvasRef.current = ownerCanvas;
+        seedInitialDuelTerritories();
       }
     } else {
       revealCanvasRef.current = null;
@@ -742,6 +802,338 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const getDuelPlayer = (id: DuelPlayerId): DuelPlayer | undefined => (
     duelPlayersRef.current.find(player => player.id === id)
   );
+
+  const createSoloTerritoryPlayer = (): DuelPlayer => ({
+    ...playerRef.current,
+    id: 1,
+    label: lang === 'en' ? 'YOU' : '你',
+    scorePixels: 0,
+    deaths: 0,
+    trappedTime: 0,
+    eliminated: false,
+    respawnTimer: 0,
+    ghostTime: 0,
+    lastScoreAt: 0,
+    trailColor: '#fbbf24',
+  });
+
+  const territoryCellWidth = WIDTH / territoryColumns;
+  const territoryCellHeight = HEIGHT / territoryRows;
+
+  const getTerritoryIndex = (cellX: number, cellY: number): number => (
+    cellY * territoryColumns + cellX
+  );
+
+  const canvasToTerritoryCell = (x: number, y: number) => {
+    const cellX = Math.max(0, Math.min(territoryColumns - 1, Math.floor(x / territoryCellWidth)));
+    const cellY = Math.max(0, Math.min(territoryRows - 1, Math.floor(y / territoryCellHeight)));
+    return { cellX, cellY, index: getTerritoryIndex(cellX, cellY) };
+  };
+
+  const territoryCellCenter = (cellX: number, cellY: number): Position => ({
+    x: (cellX + 0.5) * territoryCellWidth,
+    y: (cellY + 0.5) * territoryCellHeight,
+  });
+
+  const territoryCellBounds = (cellX: number, cellY: number) => {
+    const left = Math.max(0, Math.floor(cellX * territoryCellWidth));
+    const top = Math.max(0, Math.floor(cellY * territoryCellHeight));
+    const right = Math.min(WIDTH, Math.ceil((cellX + 1) * territoryCellWidth));
+    const bottom = Math.min(HEIGHT, Math.ceil((cellY + 1) * territoryCellHeight));
+    return { left, top, width: right - left, height: bottom - top };
+  };
+
+  const getTerritoryOwnerAtCanvas = (x: number, y: number): number => {
+    const { index } = canvasToTerritoryCell(x, y);
+    return territoryGridRef.current[index] ?? 0;
+  };
+
+  const createTerritoryHotZones = (): TerritoryHotZone[] => ([
+    { x: WIDTH * 0.25, y: HEIGHT * 0.24, radius: 48, color: '#facc15' },
+    { x: WIDTH * 0.68, y: HEIGHT * 0.30, radius: 54, color: '#22d3ee' },
+    { x: WIDTH * 0.52, y: HEIGHT * 0.72, radius: 50, color: '#fb7185' },
+  ]);
+
+  const updateTerritoryCombo = (ownerId: DuelPlayerId): number => {
+    const state = territoryComboRef.current;
+    if (state.ownerId === ownerId && state.timer > 0) {
+      state.count += 1;
+    } else {
+      state.ownerId = ownerId;
+      state.count = 1;
+    }
+    state.timer = 4.5;
+    return state.count;
+  };
+
+  const tickTerritoryCombo = (delta: number) => {
+    const state = territoryComboRef.current;
+    if (state.timer <= 0) return;
+    state.timer = Math.max(0, state.timer - delta);
+    if (state.timer === 0) {
+      state.ownerId = null;
+      state.count = 0;
+    }
+  };
+
+  const getOwnerTerritoryPercent = (ownerId: DuelPlayerId): number => {
+    const territoryGrid = territoryGridRef.current;
+    if (territoryGrid.length === 0) return 0;
+    let ownedCells = 0;
+    for (let i = 0; i < territoryGrid.length; i++) {
+      if (territoryGrid[i] === ownerId) ownedCells++;
+    }
+    return (ownedCells / territoryGrid.length) * 100;
+  };
+
+  const updateHotZoneClaims = (ownerId: DuelPlayerId): number => {
+    if (!isTerritoryMap) return 0;
+    let claimedZones = 0;
+    territoryHotZonesRef.current.forEach(zone => {
+      if (zone.claimedBy) return;
+      let ownedCells = 0;
+      let zoneCells = 0;
+      const radiusSq = zone.radius * zone.radius;
+      const minCellX = Math.max(0, Math.floor((zone.x - zone.radius) / territoryCellWidth));
+      const maxCellX = Math.min(territoryColumns - 1, Math.ceil((zone.x + zone.radius) / territoryCellWidth));
+      const minCellY = Math.max(0, Math.floor((zone.y - zone.radius) / territoryCellHeight));
+      const maxCellY = Math.min(territoryRows - 1, Math.ceil((zone.y + zone.radius) / territoryCellHeight));
+
+      for (let cellY = minCellY; cellY <= maxCellY; cellY++) {
+        for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+          const center = territoryCellCenter(cellX, cellY);
+          const dx = center.x - zone.x;
+          const dy = center.y - zone.y;
+          if (dx * dx + dy * dy > radiusSq) continue;
+          zoneCells++;
+          if (territoryGridRef.current[getTerritoryIndex(cellX, cellY)] === ownerId) {
+            ownedCells++;
+          }
+        }
+      }
+
+      if (zoneCells > 0 && ownedCells / zoneCells >= 0.55) {
+        zone.claimedBy = ownerId;
+        claimedZones++;
+        spawnSplatParticles(zone.x, zone.y, zone.color);
+      }
+    });
+    return claimedZones;
+  };
+
+  const buildTerritoryCircleCells = (centerX: number, centerY: number, radiusCells: number): number[] => {
+    const center = canvasToTerritoryCell(centerX, centerY);
+    const cells: number[] = [];
+    const radiusSq = radiusCells * radiusCells;
+    for (let y = Math.max(0, center.cellY - radiusCells); y <= Math.min(territoryRows - 1, center.cellY + radiusCells); y++) {
+      for (let x = Math.max(0, center.cellX - radiusCells); x <= Math.min(territoryColumns - 1, center.cellX + radiusCells); x++) {
+        const dx = x - center.cellX;
+        const dy = y - center.cellY;
+        if (dx * dx + dy * dy <= radiusSq) {
+          cells.push(getTerritoryIndex(x, y));
+        }
+      }
+    }
+    return cells;
+  };
+
+  const clearActiveTrail = (ownerId: DuelPlayerId) => {
+    const trailGrid = trailGridRef.current;
+    for (let i = 0; i < trailGrid.length; i++) {
+      if (trailGrid[i] === ownerId) {
+        trailGrid[i] = 0;
+      }
+    }
+    activeTrailsRef.current[ownerId] = [];
+    lastTrailCellRef.current[ownerId] = -1;
+  };
+
+  const claimTerritoryCells = (ownerId: DuelPlayerId, cellIndexes: number[]): number => {
+    if (!usesTerritoryGameplay || cellIndexes.length === 0) return 0;
+
+    const territoryGrid = territoryGridRef.current;
+    const trailGrid = trailGridRef.current;
+    const ownerMap = restorationOwnerRef.current;
+    const revealCtx = revealCanvasRef.current?.getContext('2d');
+    const overlayCtx = ownerOverlayCanvasRef.current?.getContext('2d');
+    const overlayColor = ownerId === 1 ? 'rgba(251, 191, 36, 0.28)' : 'rgba(34, 211, 238, 0.28)';
+
+    let claimed = 0;
+    revealCtx?.save();
+    if (revealCtx) {
+      revealCtx.globalCompositeOperation = 'destination-out';
+    }
+    overlayCtx?.save();
+    if (overlayCtx) {
+      overlayCtx.globalCompositeOperation = 'source-over';
+      overlayCtx.fillStyle = overlayColor;
+    }
+
+    for (const cellIndex of cellIndexes) {
+      if (cellIndex < 0 || cellIndex >= territoryGrid.length) continue;
+      const previousOwner = territoryGrid[cellIndex];
+      const cellX = cellIndex % territoryColumns;
+      const cellY = Math.floor(cellIndex / territoryColumns);
+      const bounds = territoryCellBounds(cellX, cellY);
+
+      territoryGrid[cellIndex] = ownerId;
+      trailGrid[cellIndex] = 0;
+      if (previousOwner !== ownerId) claimed++;
+
+      if (revealCtx) {
+        revealCtx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height);
+      }
+      if (overlayCtx) {
+        overlayCtx.clearRect(bounds.left, bounds.top, bounds.width, bounds.height);
+        overlayCtx.fillRect(bounds.left, bounds.top, bounds.width, bounds.height);
+      }
+
+      if (ownerMap.length === WIDTH * HEIGHT) {
+        const right = Math.min(WIDTH, bounds.left + bounds.width);
+        const bottom = Math.min(HEIGHT, bounds.top + bounds.height);
+        for (let py = bounds.top; py < bottom; py++) {
+          const rowOffset = py * WIDTH;
+          for (let px = bounds.left; px < right; px++) {
+            ownerMap[rowOffset + px] = ownerId;
+          }
+        }
+      }
+    }
+
+    revealCtx?.restore();
+    overlayCtx?.restore();
+    return claimed;
+  };
+
+  const seedInitialDuelTerritories = () => {
+    if (isTerritoryMap && !isLocalDuel) {
+      const player = playerRef.current;
+      claimTerritoryCells(1, buildTerritoryCircleCells(player.x, player.y, initialTerritoryRadiusCells));
+      const pct = getDuelRestorationPercent();
+      restorationRateRef.current = pct;
+      setMaskRevealRate(Math.min(100, Math.round(pct)));
+      syncDuelScores();
+      return;
+    }
+
+    const p1 = getDuelPlayer(1);
+    const p2 = getDuelPlayer(2);
+    if (p1) {
+      claimTerritoryCells(1, buildTerritoryCircleCells(p1.x, p1.y, initialTerritoryRadiusCells));
+    }
+    if (p2) {
+      claimTerritoryCells(2, buildTerritoryCircleCells(p2.x, p2.y, initialTerritoryRadiusCells));
+    }
+    const pct = getDuelRestorationPercent();
+    restorationRateRef.current = pct;
+    setMaskRevealRate(Math.min(100, Math.round(pct)));
+    syncDuelScores();
+  };
+
+  const getTrailCellIndexes = (ownerId: DuelPlayerId): number[] => {
+    const trailGrid = trailGridRef.current;
+    const cells: number[] = [];
+    for (let i = 0; i < trailGrid.length; i++) {
+      if (trailGrid[i] === ownerId) cells.push(i);
+    }
+    return cells;
+  };
+
+  const closeDuelTrail = (player: DuelPlayer): number => {
+    const ownerId = player.id;
+    const trailCells = getTrailCellIndexes(ownerId);
+    if (trailCells.length === 0) {
+      clearActiveTrail(ownerId);
+      return 0;
+    }
+
+    const territoryGrid = territoryGridRef.current;
+    const trailGrid = trailGridRef.current;
+    const totalCells = territoryCellCount;
+    const boundary = new Uint8Array(totalCells);
+    const outside = new Uint8Array(totalCells);
+    const queue: number[] = [];
+
+    for (let i = 0; i < totalCells; i++) {
+      if (territoryGrid[i] === ownerId || trailGrid[i] === ownerId) {
+        boundary[i] = 1;
+      }
+    }
+
+    const pushOutside = (cellIndex: number) => {
+      if (cellIndex < 0 || cellIndex >= totalCells || outside[cellIndex] || boundary[cellIndex]) return;
+      outside[cellIndex] = 1;
+      queue.push(cellIndex);
+    };
+
+    for (let x = 0; x < territoryColumns; x++) {
+      pushOutside(getTerritoryIndex(x, 0));
+      pushOutside(getTerritoryIndex(x, territoryRows - 1));
+    }
+    for (let y = 0; y < territoryRows; y++) {
+      pushOutside(getTerritoryIndex(0, y));
+      pushOutside(getTerritoryIndex(territoryColumns - 1, y));
+    }
+
+    for (let i = 0; i < queue.length; i++) {
+      const idx = queue[i];
+      const cellX = idx % territoryColumns;
+      const cellY = Math.floor(idx / territoryColumns);
+      if (cellX > 0) pushOutside(idx - 1);
+      if (cellX < territoryColumns - 1) pushOutside(idx + 1);
+      if (cellY > 0) pushOutside(idx - territoryColumns);
+      if (cellY < territoryRows - 1) pushOutside(idx + territoryColumns);
+    }
+
+    const fillCells: number[] = [];
+    for (let i = 0; i < totalCells; i++) {
+      if (trailGrid[i] === ownerId || (!outside[i] && territoryGrid[i] !== ownerId)) {
+        fillCells.push(i);
+      }
+    }
+
+    const cellsToClaim = fillCells.length >= minFillCells ? fillCells : trailCells;
+    const claimed = claimTerritoryCells(ownerId, cellsToClaim);
+    clearActiveTrail(ownerId);
+
+    if (claimed > 0) {
+      const pct = (claimed / totalCells) * 100;
+      const comboCount = updateTerritoryCombo(ownerId);
+      const claimedHotZones = updateHotZoneClaims(ownerId);
+      setDuelMessage(lang === 'en'
+        ? `${player.label} sealed ${pct.toFixed(1)}%${comboCount > 1 ? ` · COMBO x${comboCount}` : ''}${claimedHotZones > 0 ? ' · HOT ZONE' : ''}`
+        : `${player.label} 闭合填充 ${pct.toFixed(1)}%${comboCount > 1 ? ` · 连击 x${comboCount}` : ''}${claimedHotZones > 0 ? ' · 热区占领' : ''}`);
+      spawnSplatParticles(player.x, player.y, player.trailColor);
+
+      if (isLocalDuel) {
+        duelPlayersRef.current.forEach(other => {
+          if (other.id !== ownerId && !other.eliminated && other.ghostTime <= 0 && getTerritoryOwnerAtCanvas(other.x, other.y) === ownerId) {
+            eliminateDuelPlayer(other, 'trap');
+          }
+        });
+      }
+    }
+
+    syncDuelScores();
+    return claimed;
+  };
+
+  const addDuelTrailPoint = (player: DuelPlayer) => {
+    const ownerId = player.id;
+    const cell = canvasToTerritoryCell(player.x, player.y);
+    if (lastTrailCellRef.current[ownerId] === cell.index) return;
+
+    if (trailGridRef.current[cell.index] === ownerId && activeTrailsRef.current[ownerId].length > 8) {
+      closeDuelTrail(player);
+      return;
+    }
+
+    if (territoryGridRef.current[cell.index] !== ownerId) {
+      trailGridRef.current[cell.index] = ownerId;
+      activeTrailsRef.current[ownerId].push(territoryCellCenter(cell.cellX, cell.cellY));
+      lastTrailCellRef.current[ownerId] = cell.index;
+    }
+  };
 
   const paintOwnerOverlay = (x: number, y: number, radius: number, ownerId: DuelPlayerId) => {
     const overlay = ownerOverlayCanvasRef.current;
@@ -860,6 +1252,35 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
     }
 
+    if (usesTerritoryGameplay) {
+      const territoryGrid = territoryGridRef.current;
+      const trailGrid = trailGridRef.current;
+      const center = canvasToTerritoryCell(x, y);
+      const radiusCellsX = Math.ceil(radius / territoryCellWidth);
+      const radiusCellsY = Math.ceil(radius / territoryCellHeight);
+      const radiusSq = radius * radius;
+      for (let cellY = Math.max(0, center.cellY - radiusCellsY); cellY <= Math.min(territoryRows - 1, center.cellY + radiusCellsY); cellY++) {
+        for (let cellX = Math.max(0, center.cellX - radiusCellsX); cellX <= Math.min(territoryColumns - 1, center.cellX + radiusCellsX); cellX++) {
+          const cellCenter = territoryCellCenter(cellX, cellY);
+          const dx = cellCenter.x - x;
+          const dy = cellCenter.y - y;
+          if (dx * dx + dy * dy <= radiusSq) {
+            const idx = getTerritoryIndex(cellX, cellY);
+            territoryGrid[idx] = 0;
+            trailGrid[idx] = 0;
+          }
+        }
+      }
+      activeTrailsRef.current[1] = activeTrailsRef.current[1].filter(point => Math.hypot(point.x - x, point.y - y) > radius);
+      activeTrailsRef.current[2] = activeTrailsRef.current[2].filter(point => Math.hypot(point.x - x, point.y - y) > radius);
+      ([1, 2] as DuelPlayerId[]).forEach(ownerId => {
+        const trail = activeTrailsRef.current[ownerId];
+        const lastPoint = trail[trail.length - 1];
+        lastTrailCellRef.current[ownerId] = lastPoint ? canvasToTerritoryCell(lastPoint.x, lastPoint.y).index : -1;
+      });
+      syncDuelScores();
+    }
+
     const overlay = ownerOverlayCanvasRef.current;
     const overlayCtx = overlay?.getContext('2d');
     if (overlayCtx) {
@@ -971,10 +1392,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       { dx: 0, dy: -sampleRadius },
     ];
 
+    if (usesTerritoryGameplay) {
+      return samples.some(point => getTerritoryOwnerAtCanvas(x + point.dx, y + point.dy) !== 0);
+    }
+
     return samples.some(point => isRestoredPixel(x + point.dx, y + point.dy));
   };
 
   const getOwnerAt = (x: number, y: number): number => {
+    if (usesTerritoryGameplay) {
+      return getTerritoryOwnerAtCanvas(x, y);
+    }
     const cx = Math.max(0, Math.min(WIDTH - 1, Math.round(x)));
     const cy = Math.max(0, Math.min(HEIGHT - 1, Math.round(y)));
     return restorationOwnerRef.current[cy * WIDTH + cx] ?? 0;
@@ -1000,6 +1428,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   };
 
   const calculateOwnerCounts = () => {
+    if (usesTerritoryGameplay) {
+      const territoryGrid = territoryGridRef.current;
+      let p1Cells = 0;
+      let p2Cells = 0;
+      for (let i = 0; i < territoryGrid.length; i++) {
+        if (territoryGrid[i] === 1) p1Cells++;
+        else if (territoryGrid[i] === 2) p2Cells++;
+      }
+      const cellArea = territoryCellWidth * territoryCellHeight;
+      return {
+        p1: Math.round(p1Cells * cellArea),
+        p2: Math.round(p2Cells * cellArea),
+      };
+    }
+
     const ownerMap = restorationOwnerRef.current;
     let p1 = 0;
     let p2 = 0;
@@ -1010,6 +1453,15 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return { p1, p2 };
   };
 
+  const getDuelRestorationPercent = (): number => {
+    const territoryGrid = territoryGridRef.current;
+    let ownedCells = 0;
+    for (let i = 0; i < territoryGrid.length; i++) {
+      if (territoryGrid[i] !== 0) ownedCells++;
+    }
+    return (ownedCells / territoryGrid.length) * 100;
+  };
+
   const cellBlockedForPlayer = (cellX: number, cellY: number, playerId: DuelPlayerId): boolean => {
     const opponentId = playerId === 1 ? 2 : 1;
     const sampleX = (cellX + 0.5) * (WIDTH / DUEL_GRID_COLUMNS);
@@ -1017,12 +1469,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     return getOwnerAt(sampleX, sampleY) === opponentId;
   };
 
-  const hasDuelEscapePath = (player: DuelPlayer): boolean => {
-    if (!isLocalDuel || player.ghostTime > 0 || player.eliminated) return true;
-
-    const startX = Math.max(0, Math.min(DUEL_GRID_COLUMNS - 1, Math.floor(player.x / (WIDTH / DUEL_GRID_COLUMNS))));
-    const startY = Math.max(0, Math.min(DUEL_GRID_ROWS - 1, Math.floor(player.y / (HEIGHT / DUEL_GRID_ROWS))));
-    if (cellBlockedForPlayer(startX, startY, player.id)) return false;
+  const hasDuelPathToEdge = (playerId: DuelPlayerId, x: number, y: number): boolean => {
+    const startX = Math.max(0, Math.min(DUEL_GRID_COLUMNS - 1, Math.floor(x / (WIDTH / DUEL_GRID_COLUMNS))));
+    const startY = Math.max(0, Math.min(DUEL_GRID_ROWS - 1, Math.floor(y / (HEIGHT / DUEL_GRID_ROWS))));
+    if (cellBlockedForPlayer(startX, startY, playerId)) return false;
 
     const visited = new Uint8Array(DUEL_GRID_COLUMNS * DUEL_GRID_ROWS);
     const queue: Array<[number, number]> = [[startX, startY]];
@@ -1040,13 +1490,18 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       for (const [nx, ny] of neighbors) {
         if (nx < 0 || ny < 0 || nx >= DUEL_GRID_COLUMNS || ny >= DUEL_GRID_ROWS) continue;
         const idx = ny * DUEL_GRID_COLUMNS + nx;
-        if (visited[idx] || cellBlockedForPlayer(nx, ny, player.id)) continue;
+        if (visited[idx] || cellBlockedForPlayer(nx, ny, playerId)) continue;
         visited[idx] = 1;
         queue.push([nx, ny]);
       }
     }
 
     return false;
+  };
+
+  const hasDuelEscapePath = (player: DuelPlayer): boolean => {
+    if (!isLocalDuel || player.ghostTime > 0 || player.eliminated) return true;
+    return hasDuelPathToEdge(player.id, player.x, player.y);
   };
 
   // Hex conversion helpers
@@ -2385,6 +2840,70 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.lineTo(120 + i * 76, 310);
         ctx.stroke();
       }
+    } else if (type === 'chromamap') {
+      const bg = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+      bg.addColorStop(0, '#070712');
+      bg.addColorStop(0.55, '#171326');
+      bg.addColorStop(1, '#08131f');
+      ctx.fillStyle = bg;
+      ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+      const colors = ['#7c3aed', '#0891b2', '#db2777', '#84cc16', '#facc15', '#f97316', '#14b8a6', '#4f46e5'];
+      for (let i = 0; i < 54; i++) {
+        const seedA = Math.sin(i * 19.91) * 10000;
+        const seedB = Math.sin(i * 37.17 + 4.2) * 10000;
+        const cx = 60 + (seedA - Math.floor(seedA)) * (WIDTH - 120);
+        const cy = 55 + (seedB - Math.floor(seedB)) * (HEIGHT - 110);
+        const radiusX = 70 + ((Math.sin(i * 11.3) + 1) * 0.5) * 92;
+        const radiusY = 52 + ((Math.cos(i * 9.7) + 1) * 0.5) * 76;
+        const points = 8 + (i % 5);
+        ctx.save();
+        ctx.globalAlpha = 0.72;
+        ctx.fillStyle = colors[i % colors.length];
+        ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let p = 0; p < points; p++) {
+          const angle = (p / points) * Math.PI * 2;
+          const wobble = 0.68 + ((Math.sin(i * 5.31 + p * 2.17) + 1) * 0.5) * 0.52;
+          const x = cx + Math.cos(angle) * radiusX * wobble;
+          const y = cy + Math.sin(angle) * radiusY * wobble;
+          if (p === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'overlay';
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 2;
+      for (let y = 48; y < HEIGHT; y += 86) {
+        ctx.beginPath();
+        ctx.moveTo(0, y + Math.sin(y * 0.03) * 18);
+        for (let x = 0; x <= WIDTH; x += 90) {
+          ctx.lineTo(x, y + Math.sin(x * 0.012 + y * 0.04) * 18);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+
+      ctx.save();
+      const hotZones = createTerritoryHotZones();
+      hotZones.forEach(zone => {
+        const glow = ctx.createRadialGradient(zone.x, zone.y, 4, zone.x, zone.y, zone.radius * 1.6);
+        glow.addColorStop(0, `${zone.color}99`);
+        glow.addColorStop(0.55, `${zone.color}30`);
+        glow.addColorStop(1, `${zone.color}00`);
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(zone.x, zone.y, zone.radius * 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      ctx.restore();
     }
   };
 
@@ -2396,15 +2915,21 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (keysPressed.current['s']) dy += 1;
       if (keysPressed.current['a']) dx -= 1;
       if (keysPressed.current['d']) dx += 1;
+      const touchMove = touchMovementRef.current;
+      if (touchMove.active) {
+        dx += touchMove.dx;
+        dy += touchMove.dy;
+      }
     } else {
       if (keysPressed.current['arrowup']) dy -= 1;
       if (keysPressed.current['arrowdown']) dy += 1;
       if (keysPressed.current['arrowleft']) dx -= 1;
       if (keysPressed.current['arrowright']) dx += 1;
     }
-    if (dx !== 0 && dy !== 0) {
-      dx *= 0.7071;
-      dy *= 0.7071;
+    const magnitude = Math.hypot(dx, dy);
+    if (magnitude > 1) {
+      dx /= magnitude;
+      dy /= magnitude;
     }
     return { dx, dy };
   };
@@ -2432,7 +2957,16 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       { x: WIDTH - 150, y: HEIGHT - 120 },
     ];
 
-    const candidates = [...fixedSpawns];
+    const candidates: Position[] = [];
+    const territoryGrid = territoryGridRef.current;
+    for (let i = 0; i < territoryGrid.length; i += 11) {
+      if (territoryGrid[i] === player.id) {
+        const cellX = i % territoryColumns;
+        const cellY = Math.floor(i / territoryColumns);
+        candidates.push(territoryCellCenter(cellX, cellY));
+      }
+    }
+    candidates.push(...fixedSpawns);
     for (let i = 0; i < 18; i++) {
       candidates.push({
         x: 80 + Math.random() * (WIDTH - 160),
@@ -2444,12 +2978,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     const guards = guardsRef.current;
     const candidate = candidates.find(point => {
       if (wouldDuelPlayerEnterOpponentArea(player, point.x, point.y, player.radius + 8)) return false;
+      if (!hasDuelPathToEdge(player.id, point.x, point.y)) return false;
       if (other && Math.hypot(other.x - point.x, other.y - point.y) < 180) return false;
       if (guards.some(guard => Math.hypot(guard.x - point.x, guard.y - point.y) < 130)) return false;
       return true;
     });
 
-    return candidate ?? fixedSpawns[player.id - 1];
+    if (candidate) return candidate;
+
+    const fallback = fixedSpawns[player.id - 1];
+    eraseRestorationAt(fallback.x, fallback.y, 48);
+    return fallback;
   };
 
   const eliminateDuelPlayer = (player: DuelPlayer, reason: 'trap' | 'guard') => {
@@ -2462,6 +3001,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     player.vy = 0;
     player.isMoving = false;
     player.deaths += 1;
+    clearActiveTrail(player.id);
     const message = lang === 'en'
       ? `${player.label} vanished by ${reason === 'trap' ? 'paint enclosure' : 'guard scan'}`
       : `${player.label} ${reason === 'trap' ? '被复苏屏障围困消失' : '被巡逻兵扫描消失'}`;
@@ -2486,6 +3026,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     player.respawnTimer = 0;
     player.ghostTime = DUEL_GHOST_SECONDS;
     player.trappedTime = 0;
+    clearActiveTrail(player.id);
     setDuelMessage(lang === 'en' ? `${player.label} respawned` : `${player.label} 已随机复活`);
     spawnSplatParticles(player.x, player.y, player.trailColor);
   };
@@ -2635,7 +3176,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
   const updateDuelGame = () => {
     duelElapsedRef.current += 1 / 60;
-    const remaining = Math.max(0, DUEL_DURATION_SECONDS - duelElapsedRef.current);
+    tickTerritoryCombo(1 / 60);
+    const remaining = Math.max(0, duelDurationSeconds - duelElapsedRef.current);
     if (frameCountRef.current % 15 === 0) {
       setDuelTimeLeft(Math.ceil(remaining));
     }
@@ -2680,29 +3222,30 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       updateDuelPlayerCamouflage(player);
 
       if (player.ghostTime <= 0) {
-        const gained = revealPaintingAt(player.x, player.y, player.radius + 7, player.id);
-        if (gained > 0) {
+        const currentOwner = getTerritoryOwnerAtCanvas(player.x, player.y);
+        if (currentOwner === player.id) {
+          const gained = activeTrailsRef.current[player.id].length > 0 ? closeDuelTrail(player) : 0;
+          if (gained > 0) {
+            player.lastScoreAt = duelElapsedRef.current;
+          }
+          player.trappedTime = 0;
+        } else if (currentOwner === 0) {
+          addDuelTrailPoint(player);
           player.lastScoreAt = duelElapsedRef.current;
-        }
-
-        if (hasDuelEscapePath(player)) {
           player.trappedTime = 0;
         } else {
-          player.trappedTime += 1 / 60;
-          if (player.trappedTime >= DUEL_TRAP_SECONDS) {
-            eliminateDuelPlayer(player, 'trap');
-          }
+          eliminateDuelPlayer(player, 'trap');
         }
       }
     });
 
     frameCountRef.current++;
     if (frameCountRef.current % 10 === 0) {
-      const pct = 100 - getWhiteMaskPercentage();
+      const pct = getDuelRestorationPercent();
       restorationRateRef.current = pct;
       setMaskRevealRate(Math.min(100, Math.round(pct)));
       syncDuelScores();
-      if (pct >= restorationTargetPercent) {
+      if (!isTerritoryMap && pct >= restorationTargetPercent) {
         finishDuel('restored');
         return;
       }
@@ -2743,11 +3286,17 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (keysPressed.current['s'] || keysPressed.current['arrowdown']) dy += 1;
       if (keysPressed.current['a'] || keysPressed.current['arrowleft']) dx -= 1;
       if (keysPressed.current['d'] || keysPressed.current['arrowright']) dx += 1;
+      const touchMove = touchMovementRef.current;
+      if (touchMove.active) {
+        dx += touchMove.dx;
+        dy += touchMove.dy;
+      }
 
-      // Normalize diagonal speed
-      if (dx !== 0 && dy !== 0) {
-        dx *= 0.7071;
-        dy *= 0.7071;
+      // Normalize keyboard, joystick, or mixed input.
+      const movementMagnitude = Math.hypot(dx, dy);
+      if (movementMagnitude > 1) {
+        dx /= movementMagnitude;
+        dy /= movementMagnitude;
       }
 
       player.vx = dx * speed;
@@ -2762,6 +3311,36 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       if (player.x > WIDTH - player.radius) player.x = WIDTH - player.radius;
       if (player.y < player.radius) player.y = player.radius;
       if (player.y > HEIGHT - player.radius) player.y = HEIGHT - player.radius;
+
+      if (isTerritoryMap) {
+        tickTerritoryCombo(1 / 60);
+        const territoryPlayer = createSoloTerritoryPlayer();
+        const currentOwner = getTerritoryOwnerAtCanvas(player.x, player.y);
+        if (currentOwner === 1) {
+          const gained = activeTrailsRef.current[1].length > 0 ? closeDuelTrail(territoryPlayer) : 0;
+          if (gained > 0) {
+            spawnSplatParticles(player.x, player.y, territoryPlayer.trailColor);
+          }
+        } else {
+          addDuelTrailPoint(territoryPlayer);
+        }
+
+        frameCountRef.current++;
+        if (frameCountRef.current % 10 === 0) {
+          const pct = getDuelRestorationPercent();
+          restorationRateRef.current = pct;
+          setMaskRevealRate(Math.min(100, Math.round(pct)));
+          syncDuelScores();
+
+          if (pct >= restorationTargetPercent && !exitGateRef.current.isOpen) {
+            const gate = exitGateRef.current;
+            gate.isOpen = true;
+            setIsExitOpen(true);
+            audio.playCollect();
+            spawnSplatParticles(gate.x + gate.width / 2, gate.y + gate.height / 2, '#fbbf24');
+          }
+        }
+      }
 
       // If sunflowers level, handle custom gameplay elements (revealing, clones, powerup)
       if (painting.proceduralType === 'sunflowers') {
@@ -2901,7 +3480,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       // Handle mask levels (universal)
-      if (isRestorationLevel && painting.proceduralType !== 'sunflowers') {
+      if (isRestorationLevel && painting.proceduralType !== 'sunflowers' && !isTerritoryMap) {
         // Reveal paint under player
         revealPaintingAt(player.x, player.y, player.radius + 6);
 
@@ -3337,7 +3916,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         if (isRestorationLevel && revealCanvasRef.current) {
           ctx.drawImage(revealCanvasRef.current, 0, 0);
         }
-        if (isLocalDuel && ownerOverlayCanvasRef.current) {
+        if (usesTerritoryGameplay && ownerOverlayCanvasRef.current) {
           ctx.save();
           ctx.globalCompositeOperation = 'source-over';
           ctx.drawImage(ownerOverlayCanvasRef.current, 0, 0);
@@ -3348,14 +3927,63 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.fillRect(0, 0, WIDTH, HEIGHT);
       }
 
+      if (isTerritoryMap) {
+        territoryHotZonesRef.current.forEach((zone, idx) => {
+          const pulse = 1 + Math.sin(Date.now() * 0.004 + idx) * 0.08;
+          ctx.save();
+          ctx.globalAlpha = zone.claimedBy ? 0.32 : 0.78;
+          ctx.strokeStyle = zone.claimedBy === 1 ? '#fbbf24' : zone.claimedBy === 2 ? '#22d3ee' : zone.color;
+          ctx.fillStyle = zone.claimedBy ? 'rgba(15, 23, 42, 0.12)' : `${zone.color}26`;
+          ctx.lineWidth = zone.claimedBy ? 2 : 3;
+          ctx.shadowColor = zone.color;
+          ctx.shadowBlur = zone.claimedBy ? 4 : 16;
+          ctx.beginPath();
+          ctx.arc(zone.x, zone.y, zone.radius * pulse, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = zone.claimedBy ? '#ffffff99' : '#ffffff';
+          ctx.font = 'bold 10px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(zone.claimedBy ? `P${zone.claimedBy}` : 'HOT', zone.x, zone.y + 3);
+          ctx.restore();
+        });
+      }
+
+      if (usesTerritoryGameplay) {
+        const trailOwners = (isLocalDuel ? [1, 2] : [1]) as DuelPlayerId[];
+        trailOwners.forEach(ownerId => {
+          const trail = activeTrailsRef.current[ownerId];
+          if (trail.length === 0) return;
+          ctx.save();
+          ctx.strokeStyle = ownerId === 1 ? '#fde68a' : '#67e8f9';
+          ctx.lineWidth = 7;
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.shadowColor = ownerId === 1 ? '#fbbf24' : '#22d3ee';
+          ctx.shadowBlur = 10;
+          ctx.beginPath();
+          ctx.moveTo(trail[0].x, trail[0].y);
+          for (let i = 1; i < trail.length; i++) {
+            ctx.lineTo(trail[i].x, trail[i].y);
+          }
+          const player = isLocalDuel ? getDuelPlayer(ownerId) : createSoloTerritoryPlayer();
+          if (player && !player.eliminated) {
+            ctx.lineTo(player.x, player.y);
+          }
+          ctx.stroke();
+          ctx.restore();
+        });
+      }
+
       // Draw Exit Gate (Only if discovered!)
       const gate = exitGateRef.current;
       const currentRestorationPct = Math.min(100, Math.round(restorationRateRef.current));
       const restorationStatusText = lang === 'en'
-        ? `${isLocalDuel ? 'Duel restoration' : 'Restore artwork'}: ${currentRestorationPct}% / ${restorationTargetPercent}%`
-        : `${isLocalDuel ? '双人复苏' : '画作复苏'}：${currentRestorationPct}% / ${restorationTargetPercent}%`;
+        ? `${isTerritoryMap ? 'Claim territory' : isLocalDuel ? 'Duel restoration' : 'Restore artwork'}: ${currentRestorationPct}% / ${restorationTargetPercent}%`
+        : `${isTerritoryMap ? '领地占领' : isLocalDuel ? '双人复苏' : '画作复苏'}：${currentRestorationPct}% / ${restorationTargetPercent}%`;
       const lockedObjectiveText = isRestorationLevel
-        ? `${CANVAS_TRANSLATIONS[lang].restoreArtwork} ${restorationTargetPercent}%`
+        ? `${isTerritoryMap ? (lang === 'en' ? 'Claim' : '占领') : CANVAS_TRANSLATIONS[lang].restoreArtwork} ${restorationTargetPercent}%`
         : CANVAS_TRANSLATIONS[lang].collect3Orbs;
       if (gate.isDiscovered) {
         if (gate.isOpen) {
@@ -3423,8 +4051,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.textBaseline = 'middle';
         ctx.fillText(
           isLocalDuel
-            ? (lang === 'en' ? '⚔️ Local Duel: restore more canvas, trap your rival, 90 seconds!' : '⚔️ 本地双人：复苏更多画布，围困对手，90秒结算！')
-            : (isRestorationLevel ? CANVAS_TRANSLATIONS[lang].exploreGuideRestore : CANVAS_TRANSLATIONS[lang].exploreGuide),
+            ? (lang === 'en' ? `⚔️ Local Duel: claim more territory, trap your rival, ${duelDurationLabel}!` : `⚔️ 本地双人：占领更多领地，围困对手，${duelDurationLabel}结算！`)
+            : (isTerritoryMap
+              ? (lang === 'en' ? 'Draw a loop from your territory, close it, and grow.' : '从自己的领地出发画闭合路线，回到领地后扩张。')
+              : (isRestorationLevel ? CANVAS_TRANSLATIONS[lang].exploreGuideRestore : CANVAS_TRANSLATIONS[lang].exploreGuide)),
           WIDTH / 2,
           15 + 48 / 2
         );
@@ -3740,8 +4370,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           ctx.roundRect(duelPlayer.x - 42, duelPlayer.y - duelPlayer.radius - 40, 84, 26, 4);
           ctx.fill();
           ctx.fillStyle = duelPlayer.trailColor;
+          const territoryPct = getOwnerTerritoryPercent(duelPlayer.id);
           const status = duelPlayer.ghostTime > 0
             ? `${duelPlayer.label} GHOST`
+            : isTerritoryMap
+            ? `${duelPlayer.label} ${territoryPct.toFixed(1)}%`
             : `${duelPlayer.label} ${Math.round(duelPlayer.camouflageRate * 100)}%`;
           ctx.fillText(status, duelPlayer.x, duelPlayer.y - duelPlayer.radius - 25);
           if (duelPlayer.trappedTime > 0) {
@@ -3766,7 +4399,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
         ctx.textAlign = 'center';
         ctx.fillStyle = '#fbbf24';
         ctx.fillText(
-          duelMessage || (lang === 'en' ? 'Local Duel: restore more canvas, trap your rival, survive the guards.' : '本地双人：复苏更多画布，围困对手，躲开巡逻兵。'),
+          duelMessage || (lang === 'en' ? 'Local Duel: claim more territory, trap your rival, survive the guards.' : '本地双人：占领更多领地，围困对手，躲开巡逻兵。'),
           WIDTH / 2,
           HEIGHT - 35
         );
@@ -4251,7 +4884,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
 
       // UI HUD Overlay inside the canvas:
       // Real-time Camouflage Gauge directly over player's head
-      if (player.isPainted) {
+      if (isTerritoryMap) {
+        const exploredPct = getOwnerTerritoryPercent(1);
+        ctx.save();
+        ctx.font = 'bold 11px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.82)';
+        ctx.beginPath();
+        ctx.roundRect(player.x - 48, player.y - player.radius - 38, 96, 24, 4);
+        ctx.fill();
+        ctx.fillStyle = '#fbbf24';
+        ctx.fillText(
+          lang === 'en' ? `YOU ${exploredPct.toFixed(1)}%` : `你 ${exploredPct.toFixed(1)}%`,
+          player.x,
+          player.y - player.radius - 23
+        );
+        ctx.restore();
+      } else if (player.isPainted) {
         ctx.save();
         ctx.font = 'bold 10px sans-serif';
         ctx.textAlign = 'center';
@@ -4380,10 +5029,85 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     spawnSplatParticles(player.x, player.y, hex);
   };
 
+  const updateTouchMovement = (clientX: number, clientY: number) => {
+    const state = touchMovementRef.current;
+    const maxDistance = 46;
+    let rawX = clientX - state.startX;
+    let rawY = clientY - state.startY;
+    const distance = Math.hypot(rawX, rawY);
+    if (distance > maxDistance) {
+      const scale = maxDistance / distance;
+      rawX *= scale;
+      rawY *= scale;
+    }
+    state.dx = rawX / maxDistance;
+    state.dy = rawY / maxDistance;
+    setTouchStickVisual({ active: true, x: rawX, y: rawY });
+  };
+
+  const stopTouchMovement = () => {
+    touchMovementRef.current.active = false;
+    touchMovementRef.current.pointerId = null;
+    touchMovementRef.current.dx = 0;
+    touchMovementRef.current.dy = 0;
+    setTouchStickVisual({ active: false, x: 0, y: 0 });
+  };
+
+  const handleMovePadPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    touchMovementRef.current = {
+      active: true,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      dx: 0,
+      dy: 0,
+    };
+    setTouchStickVisual({ active: true, x: 0, y: 0 });
+  };
+
+  const handleMovePadPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const state = touchMovementRef.current;
+    if (!state.active || state.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    updateTouchMovement(e.clientX, e.clientY);
+  };
+
+  const handleMovePadPointerEnd = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (touchMovementRef.current.pointerId !== e.pointerId) return;
+    e.preventDefault();
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (error) {
+      // Pointer capture can already be released by the browser on cancel.
+    }
+    stopTouchMovement();
+  };
+
+  const handleTouchActionDown = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    setTouchActionActive(true);
+    if (isLocalDuel) {
+      absorbColorForDuelPlayer(1);
+    } else {
+      absorbColorUnderPlayer();
+    }
+  };
+
+  const handleTouchActionEnd = (e: React.PointerEvent<HTMLButtonElement>) => {
+    e.preventDefault();
+    setTouchActionActive(false);
+  };
+
   const displayedRestorationRate = painting.proceduralType === 'sunflowers' ? sunflowerRevealRate : maskRevealRate;
   const restorationProgressWidth = Math.min(100, (displayedRestorationRate / restorationTargetPercent) * 100);
   const duelP1Percent = (duelScores.p1 / (WIDTH * HEIGHT)) * 100;
   const duelP2Percent = (duelScores.p2 / (WIDTH * HEIGHT)) * 100;
+  const soloTerritoryPercent = isTerritoryMap ? getOwnerTerritoryPercent(1) : displayedRestorationRate;
+  const progressLabel = isTerritoryMap
+    ? (lang === 'en' ? 'TERRITORY EXPLORED' : '领地探索率')
+    : CANVAS_TRANSLATIONS[lang].restoration;
 
   return (
     <div className="flex flex-col items-center w-full">
@@ -4435,7 +5159,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           {isRestorationLevel ? (
             <div className="flex items-center gap-2 min-w-[230px]">
               <span className="text-xs text-white/50 tracking-wider font-serif">
-                {CANVAS_TRANSLATIONS[lang].restoration}
+                {progressLabel}
               </span>
               <div className="relative w-28 h-4 bg-black rounded overflow-hidden border border-white/10">
                 <div
@@ -4505,11 +5229,13 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       {/* Special mask level explanation banner */}
       {isRestorationLevel && (
         <div className="w-full mb-4 bg-[#c5a059]/10 border border-[#c5a059]/30 text-[#c5a059] px-4 py-3 rounded-lg text-xs font-mono leading-relaxed flex items-start gap-3">
-          <span className="text-base flex-shrink-0">{painting.proceduralType === 'sunflowers' ? '🌻' : '🎨'}</span>
+          <span className="text-base flex-shrink-0">{isTerritoryMap ? '🟡' : painting.proceduralType === 'sunflowers' ? '🌻' : '🎨'}</span>
           <div>
             <strong className="block text-[#c5a059] mb-0.5 uppercase tracking-wider font-bold">
               {isLocalDuel
-                ? (lang === 'en' ? 'LOCAL DUEL: RESTORE, TRAP, RESPAWN' : '【本地双人：复苏、围困、复活】')
+                ? (lang === 'en' ? 'LOCAL DUEL: CLAIM, TRAP, RESPAWN' : '【本地双人：占领、围困、复活】')
+                : isTerritoryMap
+                ? (lang === 'en' ? 'MOBILE TERRITORY TEST: DRAW, CLOSE, CLAIM' : '【移动端领地验证：画线、闭合、占领】')
                 : painting.proceduralType === 'sunflowers'
                 ? (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: VAN GOGH REVEAL' : '【向日葵关卡专属特殊机制：色彩复苏】')
                 : (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: ARTWORK RESTORATION' : '【特殊机制：画作复苏】')
@@ -4518,8 +5244,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             <span>
               {isLocalDuel
                 ? (lang === 'en'
-                  ? `P1 uses WASD + Space/F. P2 uses Arrow Keys + Enter/Right Shift. Restore more canvas in 90 seconds; enclosing a rival removes them for 2 seconds. Total restoration at ${restorationTargetPercent}% ends the duel early.`
-                  : `P1 使用 WASD + 空格/F，P2 使用方向键 + Enter/右Shift。90秒内复苏更多画布；围住对手会让其消失2秒后随机复活。总复苏达到 ${restorationTargetPercent}% 会提前结算。`)
+                  ? `P1 uses WASD or the mobile joystick + Space/F. P2 uses Arrow Keys + Enter/Right Shift. Claim more territory in ${duelDurationLabel}; enclosing a rival removes them for 2 seconds.`
+                  : `P1 使用 WASD 或手机摇杆 + 空格/F，P2 使用方向键 + Enter/右Shift。${duelDurationLabel}内占领更多领地；围住对手会让其消失2秒后随机复活。`)
+                : isTerritoryMap
+                ? (lang === 'en'
+                  ? `Drag the mobile joystick or use WASD. Leave your home zone, draw a loop, then return to your territory to claim the enclosed area. Claim ${restorationTargetPercent}% to open the exit.`
+                  : `拖动手机摇杆或使用 WASD。离开初始领地画出闭合路线，回到自己的领地后整块占领。占领 ${restorationTargetPercent}% 后出口开启。`)
                 : painting.proceduralType === 'sunflowers'
                 ? (lang === 'en'
                   ? `The masterpiece starts covered in a white canvas! Move around or press Space / F (or click) to scratch it off. Reach ${restorationTargetPercent}% restoration to open the exit; restored paint also blocks guard movement.`
@@ -4540,8 +5270,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           <div className="w-full flex flex-col gap-1.5">
             <div className="flex justify-between items-center text-xs">
               <span className="font-bold tracking-wider text-[#c5a059] flex items-center gap-2">
-                {painting.proceduralType === 'sunflowers' ? '🌻 ' : '🎨 '}
-                {lang === 'en' ? 'ARTWORK RESTORATION' : '画作复苏率'}
+                {isTerritoryMap ? '🟡 ' : painting.proceduralType === 'sunflowers' ? '🌻 ' : '🎨 '}
+                {isTerritoryMap ? (lang === 'en' ? 'TERRITORY EXPLORED' : '领地探索率') : (lang === 'en' ? 'ARTWORK RESTORATION' : '画作复苏率')}
               </span>
               <span className="font-mono font-bold text-[#c5a059]">
                 {displayedRestorationRate}% / {restorationTargetPercent}%
@@ -4556,8 +5286,12 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             <p className="text-[10px] text-white/50 italic font-sans">
               {isLocalDuel
                 ? (lang === 'en'
-                  ? `⚔️ Timer duel: highest owned restoration wins. Reaching ${restorationTargetPercent}% total restoration ends the duel early.`
-                  : `⚔️ 双人计时赛：归属复苏更多者获胜。总复苏达到 ${restorationTargetPercent}% 会提前结算。`)
+                  ? `⚔️ Timer duel: highest owned territory wins after ${duelDurationLabel}.`
+                  : `⚔️ 双人计时赛：${duelDurationLabel}后占领更多者获胜。`)
+                : isTerritoryMap
+                ? (lang === 'en'
+                  ? `🎯 Claim closed territory until you reach ${restorationTargetPercent}%, then step through the exit.`
+                  : `🎯 闭合路线扩张领地，达到 ${restorationTargetPercent}% 后进入出口通关。`)
                 : lang === 'en'
                 ? `🎯 Restore at least ${restorationTargetPercent}% of the canvas to unlock the exit, then step through the portal!`
                 : `🎯 至少复苏 ${restorationTargetPercent}% 的画布即可开启出口，然后进入传送门逃出！`}
@@ -4580,8 +5314,51 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           width={WIDTH}
           height={HEIGHT}
           onClick={handleCanvasClick}
-          className="cursor-crosshair bg-[#0d0d0d] block max-w-full"
+          className="cursor-crosshair bg-[#0d0d0d] block max-w-full h-auto touch-none select-none"
+          style={{ touchAction: 'none' }}
         />
+
+        {!isPaused && (
+          <div className="md:hidden absolute inset-x-0 bottom-3 px-4 flex items-end justify-between pointer-events-none z-20">
+            <div
+              className="relative w-28 h-28 rounded-full border border-white/20 bg-black/45 backdrop-blur-sm shadow-[0_0_22px_rgba(0,0,0,0.45)] pointer-events-auto touch-none select-none"
+              style={{ touchAction: 'none' }}
+              role="application"
+              aria-label={lang === 'en' ? 'Touch movement joystick' : '移动摇杆'}
+              onPointerDown={handleMovePadPointerDown}
+              onPointerMove={handleMovePadPointerMove}
+              onPointerUp={handleMovePadPointerEnd}
+              onPointerCancel={handleMovePadPointerEnd}
+            >
+              <div className="absolute inset-4 rounded-full border border-[#c5a059]/35 bg-white/5" />
+              <div
+                className={`absolute left-1/2 top-1/2 w-11 h-11 -ml-[22px] -mt-[22px] rounded-full border shadow-lg transition-colors ${
+                  touchStickVisual.active
+                    ? 'bg-[#c5a059] border-white/70'
+                    : 'bg-white/20 border-white/25'
+                }`}
+                style={{ transform: `translate(${touchStickVisual.x}px, ${touchStickVisual.y}px)` }}
+              />
+            </div>
+
+            <button
+              type="button"
+              className={`w-24 h-24 rounded-full border font-mono text-[11px] font-black tracking-widest uppercase shadow-[0_0_24px_rgba(197,160,89,0.35)] pointer-events-auto touch-none select-none ${
+                touchActionActive
+                  ? 'bg-[#c5a059] text-black border-white scale-95'
+                  : 'bg-black/55 text-[#f8d889] border-[#c5a059]/55 backdrop-blur-sm'
+              }`}
+              style={{ touchAction: 'none' }}
+              onPointerDown={handleTouchActionDown}
+              onPointerUp={handleTouchActionEnd}
+              onPointerCancel={handleTouchActionEnd}
+              onPointerLeave={handleTouchActionEnd}
+              aria-label={lang === 'en' ? 'Blend action' : '吸色伪装'}
+            >
+              {lang === 'en' ? 'Blend' : '吸色'}
+            </button>
+          </div>
+        )}
 
         {/* Hidden Canvas used for exact pixel matching */}
         <canvas

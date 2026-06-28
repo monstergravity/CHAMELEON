@@ -86,7 +86,9 @@ export interface PaintingData {
   restorationTargetPercent?: number; // Optional target for mask-restoration levels
   guardMix?: GuardType[];
   duelEnabled?: boolean;
-  proceduralType: 'monalisa' | 'starrynight' | 'scream' | 'greatwave' | 'pearlearring' | 'sunflowers' | 'waterlilies' | 'thekiss' | 'venus' | 'liberty' | 'persistence' | 'cafeterrace' | 'earthlydelights' | 'temeraire' | 'grandjatte' | 'composition8' | 'boogiewoogie' | 'redstudio';
+  territoryMap?: boolean;
+  duelDurationSeconds?: number;
+  proceduralType: 'monalisa' | 'starrynight' | 'scream' | 'greatwave' | 'pearlearring' | 'sunflowers' | 'waterlilies' | 'thekiss' | 'venus' | 'liberty' | 'persistence' | 'cafeterrace' | 'earthlydelights' | 'temeraire' | 'grandjatte' | 'composition8' | 'boogiewoogie' | 'redstudio' | 'chromamap';
 }
 
 export interface GameStats {
