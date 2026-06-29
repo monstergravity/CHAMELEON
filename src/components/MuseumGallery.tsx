@@ -4,13 +4,13 @@
  */
 
 import React, { useState, useEffect, useRef } from 'react';
-import { GameMode, PaintingData, LevelDifficulty } from '../types';
+import { GameMode, PaintingData, LevelDifficulty, RunBuffs } from '../types';
 import { GameCanvas } from './GameCanvas';
 import { ProceduralArtThumbnail } from './ProceduralArtThumbnail';
 import { audio } from './AudioEngine';
-import { Play, RotateCcw, Volume2, VolumeX, HelpCircle, Award, Trophy, ArrowRight, CheckCircle2, AlertTriangle, Sparkles, BookOpen, Lock } from 'lucide-react';
+import { Play, RotateCcw, Volume2, VolumeX, HelpCircle, Award, Trophy, ArrowRight, CheckCircle2, AlertTriangle, Sparkles, BookOpen, Lock, Gift, Zap, Shield, Gauge } from 'lucide-react';
 
-type GameState = 'welcome' | 'playing' | 'cleared' | 'failed' | 'victory';
+type GameState = 'welcome' | 'playing' | 'cleared' | 'reward' | 'failed' | 'victory';
 
 interface GalleryStats {
   levelsCleared: number;
@@ -26,6 +26,8 @@ interface GallerySave {
   lang: 'zh' | 'en';
   isMuted: boolean;
   unlockedLevelCount: number;
+  runStreak?: number;
+  runBuffs?: RunBuffs;
   updatedAt: string;
 }
 
@@ -35,11 +37,18 @@ const DEFAULT_STATS: GalleryStats = {
   timesSpotted: 0,
   secondsPlayed: 0,
 };
+const DEFAULT_RUN_BUFFS: RunBuffs = {
+  stealthBonusSeconds: 0,
+  territoryBonusCells: 0,
+  speedMultiplier: 1,
+  respawnBonusSeconds: 0,
+};
 
 const isGameState = (value: unknown): value is GameState => (
   value === 'welcome' ||
   value === 'playing' ||
   value === 'cleared' ||
+  value === 'reward' ||
   value === 'failed' ||
   value === 'victory'
 );
@@ -73,6 +82,15 @@ const readSavedGame = (): GallerySave | null => {
       lang: parsed.lang === 'zh' ? 'zh' : 'en',
       isMuted: parsed.isMuted === true,
       unlockedLevelCount,
+      runStreak: Number.isFinite(parsed.runStreak) ? parsed.runStreak : 0,
+      runBuffs: parsed.runBuffs
+        ? {
+          stealthBonusSeconds: Number.isFinite(parsed.runBuffs.stealthBonusSeconds) ? parsed.runBuffs.stealthBonusSeconds : 0,
+          territoryBonusCells: Number.isFinite(parsed.runBuffs.territoryBonusCells) ? parsed.runBuffs.territoryBonusCells : 0,
+          speedMultiplier: Number.isFinite(parsed.runBuffs.speedMultiplier) ? parsed.runBuffs.speedMultiplier : 1,
+          respawnBonusSeconds: Number.isFinite(parsed.runBuffs.respawnBonusSeconds) ? parsed.runBuffs.respawnBonusSeconds : 0,
+        }
+        : DEFAULT_RUN_BUFFS,
       updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
     };
   } catch (error) {
@@ -734,11 +752,43 @@ export const MuseumGallery: React.FC = () => {
   const [clearSummary, setClearSummary] = useState('');
   const [unlockedLevelCount, setUnlockedLevelCount] = useState(initialUnlockedLevelCount);
   const [currentMode, setCurrentMode] = useState<GameMode>('solo');
+  const [runStreak, setRunStreak] = useState(initialSave?.runStreak ?? 0);
+  const [runBuffs, setRunBuffs] = useState<RunBuffs>(initialSave?.runBuffs ?? DEFAULT_RUN_BUFFS);
   
   // Stats
   const [stats, setStats] = useState<GalleryStats>(initialSave?.stats ?? DEFAULT_STATS);
 
   const [activeTab, setActiveTab] = useState<'game' | 'history'>('game');
+  const rewardOptions = [
+    {
+      id: 'stealth',
+      icon: Shield,
+      title: lang === 'en' ? 'Longer Blend' : '隐身更久',
+      desc: lang === 'en' ? '+2s camouflage duration' : '伪装时间 +2 秒',
+      apply: (buffs: RunBuffs): RunBuffs => ({ ...buffs, stealthBonusSeconds: buffs.stealthBonusSeconds + 2 }),
+    },
+    {
+      id: 'speed',
+      icon: Zap,
+      title: lang === 'en' ? 'Rush Step' : '冲刺步伐',
+      desc: lang === 'en' ? '+6% movement speed' : '移动速度 +6%',
+      apply: (buffs: RunBuffs): RunBuffs => ({ ...buffs, speedMultiplier: Number((buffs.speedMultiplier + 0.06).toFixed(2)) }),
+    },
+    {
+      id: 'territory',
+      icon: Gauge,
+      title: lang === 'en' ? 'Bigger Start' : '更大初始领地',
+      desc: lang === 'en' ? '+1 territory seed radius' : '初始领地半径 +1',
+      apply: (buffs: RunBuffs): RunBuffs => ({ ...buffs, territoryBonusCells: buffs.territoryBonusCells + 1 }),
+    },
+    {
+      id: 'respawn',
+      icon: Sparkles,
+      title: lang === 'en' ? 'Ghost Guard' : '复活保护',
+      desc: lang === 'en' ? '+1s duel respawn protection' : '双人复活保护 +1 秒',
+      apply: (buffs: RunBuffs): RunBuffs => ({ ...buffs, respawnBonusSeconds: buffs.respawnBonusSeconds + 1 }),
+    },
+  ];
 
   // Timer effect during active game
   useEffect(() => {
@@ -772,11 +822,13 @@ export const MuseumGallery: React.FC = () => {
       lang,
       isMuted,
       unlockedLevelCount,
+      runStreak,
+      runBuffs,
       updatedAt: new Date().toISOString(),
     };
 
     window.localStorage.setItem(SAVE_KEY, JSON.stringify(save));
-  }, [gameState, isMuted, lang, levelIndex, stats, unlockedLevelCount]);
+  }, [gameState, isMuted, lang, levelIndex, runBuffs, runStreak, stats, unlockedLevelCount]);
 
   // Handle auto-bg music trigger
   useEffect(() => {
@@ -805,10 +857,12 @@ export const MuseumGallery: React.FC = () => {
     setClearSummary(summary ?? '');
     setStats(prev => ({ ...prev, levelsCleared: Math.max(prev.levelsCleared, levelIndex + 1) }));
     setUnlockedLevelCount(prev => Math.min(PAINTINGS_GALLERY.length, Math.max(prev, levelIndex + 2)));
+    const nextStreak = runStreak + 1;
+    setRunStreak(nextStreak);
     
     // Check if there is a next level
     if (levelIndex < PAINTINGS_GALLERY.length - 1) {
-      setGameState('cleared');
+      setGameState(nextStreak % 3 === 0 ? 'reward' : 'cleared');
     } else {
       setGameState('victory');
     }
@@ -817,6 +871,7 @@ export const MuseumGallery: React.FC = () => {
   const handleGameOver = (reason: string) => {
     setStats(prev => ({ ...prev, timesSpotted: prev.timesSpotted + 1 }));
     setFailReason(reason);
+    setRunStreak(0);
     setGameState('failed');
   };
 
@@ -833,6 +888,26 @@ export const MuseumGallery: React.FC = () => {
     const restartMode = currentMode === 'local-duel' && activePainting.duelEnabled ? 'local-duel' : 'solo';
     handleStartGame(activePainting, levelIndex, restartMode);
   };
+
+  const handleContinueFromCheckpoint = () => {
+    const checkpointIdx = Math.max(0, Math.floor(levelIndex / 3) * 3);
+    const checkpointPainting = PAINTINGS_GALLERY[checkpointIdx];
+    const checkpointMode = currentMode === 'local-duel' && checkpointPainting.duelEnabled ? 'local-duel' : 'solo';
+    handleStartGame(checkpointPainting, checkpointIdx, checkpointMode);
+  };
+
+  const handleChooseReward = (applyReward: (buffs: RunBuffs) => RunBuffs) => {
+    setRunBuffs(prev => applyReward(prev));
+    handleNextLevel();
+  };
+
+  useEffect(() => {
+    if (gameState !== 'cleared') return;
+    const timer = window.setTimeout(() => {
+      handleNextLevel();
+    }, 2000);
+    return () => window.clearTimeout(timer);
+  }, [gameState, levelIndex, currentMode]);
 
   const handleToggleMute = () => {
     const muted = audio.toggleMute();
@@ -851,6 +926,8 @@ export const MuseumGallery: React.FC = () => {
     setCurrentMode('solo');
     setFailReason('');
     setClearSummary('');
+    setRunStreak(0);
+    setRunBuffs(DEFAULT_RUN_BUFFS);
     setGameState('welcome');
   };
 
@@ -984,6 +1061,45 @@ export const MuseumGallery: React.FC = () => {
               </div>
             </div>
 
+            <div className="w-full max-w-5xl mb-8 bg-[#151515]/70 border border-white/10 rounded-lg p-4">
+              <div className="flex items-center justify-between mb-3">
+                <span className="text-xs font-serif text-[#c5a059] tracking-widest uppercase">
+                  {lang === 'en' ? 'Run Route' : '连续闯关路线'}
+                </span>
+                <span className="text-[10px] font-mono text-white/45">
+                  {lang === 'en' ? `Streak ${runStreak}` : `连胜 ${runStreak}`}
+                </span>
+              </div>
+              <div className="flex gap-2 overflow-x-auto pb-1">
+                {PAINTINGS_GALLERY.map((p, idx) => {
+                  const isUnlocked = idx < unlockedLevelCount;
+                  const isCleared = idx < Math.max(0, unlockedLevelCount - 1);
+                  const isCurrent = idx === levelIndex;
+                  const isRewardNode = (idx + 1) % 3 === 0;
+                  const isBossNode = (idx + 1) % 5 === 0 || p.territoryMap;
+                  return (
+                    <button
+                      key={p.id}
+                      onClick={() => isUnlocked && handleStartGame(p, idx, 'solo')}
+                      disabled={!isUnlocked}
+                      className={`shrink-0 w-10 h-10 rounded-full border text-[10px] font-mono font-black transition-all ${
+                        isCurrent
+                          ? 'bg-[#c5a059] text-black border-white shadow-[0_0_18px_rgba(197,160,89,0.45)]'
+                          : isCleared
+                            ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700'
+                            : isUnlocked
+                              ? 'bg-black/60 text-[#c5a059] border-[#c5a059]/50 hover:bg-[#c5a059]/15'
+                              : 'bg-black/40 text-white/20 border-white/10'
+                      }`}
+                      title={lang === 'en' ? (p.nameEn || p.name) : p.name}
+                    >
+                      {isBossNode ? 'B' : isRewardNode ? '+' : idx + 1}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Level Exhibition Select */}
             <div className="w-full max-w-5xl">
               <h3 className="text-lg font-serif text-[#c5a059] tracking-wider uppercase mb-6 flex items-center gap-2">
@@ -1099,26 +1215,25 @@ export const MuseumGallery: React.FC = () => {
 
         {/* Active Playing View */}
         {gameState === 'playing' && (
-          <div className="lg:col-span-12 flex flex-col items-center justify-center w-full">
+          <div className="lg:col-span-12 flex flex-col items-center justify-start w-full">
             {/* Active Play Header Actions */}
-            <div className="w-full max-w-4xl flex flex-col sm:flex-row items-center justify-between mb-4 px-2 gap-3">
+            <div className="w-full max-w-5xl flex items-center justify-between mb-2 px-1 gap-2">
               <button
                 onClick={() => setGameState('welcome')}
-                className="px-4 py-1.5 bg-black/40 hover:bg-black/80 text-white/75 hover:text-white text-xs font-bold uppercase tracking-widest rounded transition-all border border-white/10 flex items-center gap-1.5 font-sans"
+                className="px-3 py-1 bg-black/35 hover:bg-black/75 text-white/70 hover:text-white text-[10px] font-bold uppercase tracking-widest rounded transition-all border border-white/10 flex items-center gap-1.5 font-sans"
               >
-                ← {lang === 'en' ? 'BACK TO LOBBY' : '返回艺术大厅'}
+                ← {lang === 'en' ? 'LOBBY' : '大厅'}
               </button>
               
-              <div className="flex items-center gap-3">
-                <span className="text-sm font-serif italic text-[#c5a059] tracking-wider">
-                  {lang === 'en' ? 'NOW RESTORING:' : '正在修复:'} <span className="text-white font-bold not-italic font-sans">{lang === 'en' ? (activePainting.nameEn || activePainting.name) : activePainting.name}</span>
-                </span>
-                {getDifficultyBadge(activePainting.difficulty)}
+              <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-widest text-white/45">
+                <span className="text-[#c5a059]">{lang === 'en' ? 'Streak' : '连胜'} {runStreak}</span>
+                <span className="hidden sm:inline">·</span>
+                <span className="hidden sm:inline">{getDifficultyBadge(activePainting.difficulty)}</span>
               </div>
             </div>
 
             {/* Centered Game Canvas */}
-            <div className="w-full max-w-4xl flex flex-col">
+            <div className="w-full max-w-5xl flex flex-col">
               <GameCanvas
                 painting={activePainting}
                 mode={currentMode}
@@ -1127,6 +1242,7 @@ export const MuseumGallery: React.FC = () => {
                 isMuted={isMuted}
                 onToggleMute={handleToggleMute}
                 lang={lang}
+                runBuffs={runBuffs}
               />
             </div>
           </div>
@@ -1135,46 +1251,66 @@ export const MuseumGallery: React.FC = () => {
         {/* Level Cleared Modal View */}
         {gameState === 'cleared' && (
           <div className="lg:col-span-12 flex flex-col items-center justify-center py-16">
-            <div className="max-w-md w-full bg-[#151515] border border-[#c5a059] p-8 rounded-lg text-center shadow-2xl relative">
-              <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1/2 w-16 h-16 bg-[#c5a059] text-black rounded-lg flex items-center justify-center shadow-lg shadow-[#c5a059]/20 animate-bounce">
-                <CheckCircle2 size={36} />
+            <div className="max-w-sm w-full bg-[#151515] border border-[#c5a059]/70 p-6 rounded-lg text-center shadow-2xl">
+              <div className="mx-auto mb-4 w-14 h-14 bg-[#c5a059] text-black rounded-full flex items-center justify-center shadow-lg shadow-[#c5a059]/25 animate-pulse">
+                <CheckCircle2 size={30} />
               </div>
-
-              <h2 className="text-2xl font-serif text-[#c5a059] italic font-bold mt-4 mb-2">{TRANSLATIONS[lang].successTitle}</h2>
-              <p className="text-xs text-white/60 font-mono mb-6">
-                {TRANSLATIONS[lang].successDesc}
+              <h2 className="text-2xl font-serif text-[#c5a059] italic font-bold mb-2">
+                {lang === 'en' ? 'Cleared' : '通关'}
+              </h2>
+              <p className="text-xs text-white/55 font-mono mb-4">
+                {lang === 'en' ? `Streak ${runStreak}. Next room opens now.` : `连胜 ${runStreak}。正在进入下一关。`}
               </p>
               {clearSummary && (
-                <p className="text-xs text-amber-200 bg-amber-950/20 border border-amber-700/30 p-2.5 rounded mb-6 leading-relaxed font-mono">
+                <p className="text-[10px] text-amber-200/80 bg-amber-950/20 border border-amber-700/30 p-2 rounded mb-4 leading-relaxed font-mono">
                   {clearSummary}
                 </p>
               )}
-
-              <div className="bg-black/60 p-4 rounded border border-white/10 text-left mb-6 space-y-2">
-                <p className="text-xs font-mono flex justify-between text-white/50">
-                  <span>{lang === 'en' ? 'Artwork:' : '当前画作:'}</span> <span className="text-white font-bold">{lang === 'en' ? (activePainting.nameEn || activePainting.name) : activePainting.name}</span>
-                </p>
-                <p className="text-xs font-mono flex justify-between text-white/50">
-                  <span>{lang === 'en' ? 'Difficulty:' : '画作难度:'}</span> <span>{getDifficultyBadge(activePainting.difficulty)}</span>
-                </p>
-                <p className="text-xs font-mono flex justify-between text-white/50">
-                  <span>{lang === 'en' ? 'Levels Cleared:' : '通关总层数:'}</span> <span className="text-[#c5a059] font-bold">{stats.levelsCleared} {lang === 'en' ? 'Level(s)' : '关'}</span>
-                </p>
+              <div className="h-1.5 bg-black/70 rounded-full overflow-hidden border border-white/10">
+                <div className="h-full w-full bg-[#c5a059] animate-pulse" />
               </div>
+              <button
+                onClick={handleNextLevel}
+                className="mt-5 w-full py-2 bg-black/40 hover:bg-black/65 border border-white/10 text-white/75 font-bold uppercase tracking-wider rounded transition-all flex items-center justify-center gap-1.5 text-xs"
+              >
+                {TRANSLATIONS[lang].nextLevel} <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        )}
 
-              <div className="flex gap-4">
-                <button
-                  onClick={handleRestartLevel}
-                  className="flex-1 py-2.5 bg-black/40 hover:bg-black/60 border border-white/10 text-white/80 font-bold uppercase tracking-wider rounded transition-all flex items-center justify-center gap-1.5 text-xs"
-                >
-                  <RotateCcw size={14} /> {TRANSLATIONS[lang].restart}
-                </button>
-                <button
-                  onClick={handleNextLevel}
-                  className="flex-1 py-2.5 bg-[#c5a059] hover:bg-[#d4b06d] text-black font-bold uppercase tracking-wider rounded transition-all flex items-center justify-center gap-1 text-xs"
-                >
-                  {TRANSLATIONS[lang].nextLevel} <ArrowRight size={14} />
-                </button>
+        {/* Reward Choice View */}
+        {gameState === 'reward' && (
+          <div className="lg:col-span-12 flex flex-col items-center justify-center py-12">
+            <div className="max-w-2xl w-full bg-[#151515] border border-[#c5a059]/80 p-6 rounded-lg text-center shadow-2xl">
+              <div className="mx-auto mb-4 w-14 h-14 bg-[#c5a059] text-black rounded-full flex items-center justify-center shadow-lg shadow-[#c5a059]/25">
+                <Gift size={30} />
+              </div>
+              <h2 className="text-2xl font-serif text-[#c5a059] italic font-bold mb-2">
+                {lang === 'en' ? 'Choose a Run Upgrade' : '选择连续闯关奖励'}
+              </h2>
+              <p className="text-xs text-white/55 font-mono mb-5">
+                {lang === 'en' ? `Streak ${runStreak}. Pick one upgrade before the next room.` : `连胜 ${runStreak}。进入下一关前选择一个强化。`}
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {rewardOptions.map(option => {
+                  const Icon = option.icon;
+                  return (
+                    <button
+                      key={option.id}
+                      onClick={() => handleChooseReward(option.apply)}
+                      className="text-left bg-black/45 hover:bg-[#c5a059]/15 border border-white/10 hover:border-[#c5a059]/70 rounded p-4 transition-all group"
+                    >
+                      <div className="flex items-center gap-3 mb-2">
+                        <span className="w-9 h-9 rounded bg-[#c5a059]/15 text-[#c5a059] border border-[#c5a059]/30 flex items-center justify-center group-hover:bg-[#c5a059] group-hover:text-black transition-all">
+                          <Icon size={18} />
+                        </span>
+                        <span className="text-sm font-bold text-white">{option.title}</span>
+                      </div>
+                      <p className="text-xs text-white/50 font-mono">{option.desc}</p>
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>
@@ -1204,10 +1340,10 @@ export const MuseumGallery: React.FC = () => {
 
               <div className="flex gap-4">
                 <button
-                  onClick={() => setGameState('welcome')}
+                  onClick={handleContinueFromCheckpoint}
                   className="flex-1 py-2.5 bg-black/40 hover:bg-black/60 border border-white/10 text-white/80 font-bold uppercase tracking-wider rounded transition-all flex items-center justify-center gap-1.5 text-xs"
                 >
-                  {TRANSLATIONS[lang].backToLobbyBtn}
+                  {lang === 'en' ? 'CHECKPOINT' : '检查点'}
                 </button>
                 <button
                   onClick={handleRestartLevel}

@@ -27,6 +27,13 @@ export type GuardState = 'patrol' | 'suspicious' | 'alert';
 export type GuardType = 'inspector' | 'sweeper' | 'curator' | 'drone' | 'sentinel';
 export type GameMode = 'solo' | 'local-duel';
 
+export interface RunBuffs {
+  stealthBonusSeconds: number;
+  territoryBonusCells: number;
+  speedMultiplier: number;
+  respawnBonusSeconds: number;
+}
+
 export interface Guard {
   id: number;
   x: number;

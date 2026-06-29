@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useRef, useState } from 'react';
-import { GameMode, GuardType, Player, Guard, ColorOrb, ExitGate, PaintingData, Position } from '../types';
+import { GameMode, GuardType, Player, Guard, ColorOrb, ExitGate, PaintingData, Position, RunBuffs } from '../types';
 import { audio } from './AudioEngine';
 import { RotateCcw, Play, Pause, Volume2, VolumeX, Eye, HelpCircle, Award, CheckCircle } from 'lucide-react';
 
@@ -16,6 +16,7 @@ interface GameCanvasProps {
   isMuted: boolean;
   onToggleMute: () => void;
   lang?: 'zh' | 'en';
+  runBuffs?: RunBuffs;
 }
 
 // Fixed game canvas virtual resolution
@@ -36,16 +37,10 @@ const CANVAS_TRANSLATIONS = {
     movingWarning: '⚠️ 移动中',
     camouflageText: ' 伪装',
     pressSpaceToCamo: '按空格吸取背景色',
-    fragments: 'FRAGMENTS / 碎片',
     restoration: 'RESTORATION / 复苏',
-    extraction: 'EXTRACTION / 门状态',
-    riskAlert: 'RISK ALERT / 警惕度',
     paused: 'PAUSED / 计划暂停',
     pausedTip: '抓紧时间喘息一下吧！守卫正停在原地不动。',
     resume: 'Resume Challenging / 继续',
-    colorSpectrum: '🎨 COLOR SPECTRUM / 专属色域',
-    colorSpectrumTip: 'CLICK TO SINK / 快速染色',
-    activeColor: 'ACTIVE / 现色',
     controlsMute: '静音',
     controlsUnmute: '取消静音',
     controlsPause: '暂停游戏',
@@ -70,16 +65,10 @@ const CANVAS_TRANSLATIONS = {
     movingWarning: '⚠️ Moving',
     camouflageText: '% Camo',
     pressSpaceToCamo: 'Press Space to Blend',
-    fragments: 'FRAGMENTS',
     restoration: 'RESTORATION',
-    extraction: 'EXTRACTION STATUS',
-    riskAlert: 'RISK ALERT LEVEL',
     paused: 'PAUSED',
     pausedTip: 'Take a breath! The patrol guards are frozen in place.',
     resume: 'Resume Mission',
-    colorSpectrum: '🎨 COLOR SPECTRUM',
-    colorSpectrumTip: 'CLICK TO SELECT',
-    activeColor: 'ACTIVE COLOR',
     controlsMute: 'Mute',
     controlsUnmute: 'Unmute',
     controlsPause: 'Pause Game',
@@ -207,6 +196,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   isMuted,
   onToggleMute,
   lang = 'en',
+  runBuffs = { stealthBonusSeconds: 0, territoryBonusCells: 0, speedMultiplier: 1, respawnBonusSeconds: 0 },
 }) => {
   const isRestorationLevel = MASK_LEVELS.includes(painting.proceduralType as (typeof MASK_LEVELS)[number]);
   const isTerritoryMap = painting.territoryMap === true;
@@ -217,8 +207,11 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const territoryColumns = isTerritoryMap ? LARGE_TERRITORY_COLUMNS : DUEL_TERRITORY_COLUMNS;
   const territoryRows = isTerritoryMap ? LARGE_TERRITORY_ROWS : DUEL_TERRITORY_ROWS;
   const territoryCellCount = territoryColumns * territoryRows;
-  const initialTerritoryRadiusCells = isTerritoryMap ? LARGE_INITIAL_TERRITORY_RADIUS_CELLS : DUEL_INITIAL_TERRITORY_RADIUS_CELLS;
+  const initialTerritoryRadiusCells = (isTerritoryMap ? LARGE_INITIAL_TERRITORY_RADIUS_CELLS : DUEL_INITIAL_TERRITORY_RADIUS_CELLS) + runBuffs.territoryBonusCells;
   const minFillCells = isTerritoryMap ? LARGE_MIN_FILL_CELLS : DUEL_MIN_FILL_CELLS;
+  const camoDurationSeconds = 6.0 + runBuffs.stealthBonusSeconds;
+  const playerSpeedMultiplier = runBuffs.speedMultiplier;
+  const duelGhostSeconds = DUEL_GHOST_SECONDS + runBuffs.respawnBonusSeconds;
   const duelDurationLabel = lang === 'en'
     ? (duelDurationSeconds >= 120 ? `${Math.round(duelDurationSeconds / 60)} minutes` : `${duelDurationSeconds} seconds`)
     : (duelDurationSeconds >= 120 ? `${Math.round(duelDurationSeconds / 60)}分钟` : `${duelDurationSeconds}秒`);
@@ -239,11 +232,10 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     isMoving: false,
     camouflageRate: 0,
     isPainted: false,
-    camoTimeLeft: 6.0,
-    camoMaxTime: 6.0,
+    camoTimeLeft: camoDurationSeconds,
+    camoMaxTime: camoDurationSeconds,
   });
 
-  const [activeColor, setActiveColor] = useState('#ffffff');
   const [matchRate, setMatchRate] = useState(0);
   const [orbsCollected, setOrbsCollected] = useState(0);
   const [isExitOpen, setIsExitOpen] = useState(false);
@@ -329,8 +321,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       isMoving: false,
       camouflageRate: 0,
       isPainted: false,
-      camoTimeLeft: 6.0,
-      camoMaxTime: 6.0,
+      camoTimeLeft: camoDurationSeconds,
+      camoMaxTime: camoDurationSeconds,
       scorePixels: 0,
       deaths: 0,
       trappedTime: 0,
@@ -353,8 +345,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       isMoving: false,
       camouflageRate: 0,
       isPainted: false,
-      camoTimeLeft: 6.0,
-      camoMaxTime: 6.0,
+      camoTimeLeft: camoDurationSeconds,
+      camoMaxTime: camoDurationSeconds,
       scorePixels: 0,
       deaths: 0,
       trappedTime: 0,
@@ -401,10 +393,9 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       isMoving: false,
       camouflageRate: 0.0,
       isPainted: false,
-      camoTimeLeft: 6.0,
-      camoMaxTime: 6.0,
+      camoTimeLeft: camoDurationSeconds,
+      camoMaxTime: camoDurationSeconds,
     };
-    setActiveColor('#ffffff');
     setMatchRate(0);
 
     // Initialize Orbs (3 scattered randomly on the canvas but spaced out)
@@ -758,8 +749,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     player.targetColor = color;
     player.isPainted = true;
     resetCamouflageTimer(player);
-    setActiveColor(color);
-
     // Play splat sound
     audio.playSplat();
 
@@ -3024,7 +3013,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     player.camoTimeLeft = 0;
     player.eliminated = false;
     player.respawnTimer = 0;
-    player.ghostTime = DUEL_GHOST_SECONDS;
+    player.ghostTime = duelGhostSeconds;
     player.trappedTime = 0;
     clearActiveTrail(player.id);
     setDuelMessage(lang === 'en' ? `${player.label} respawned` : `${player.label} 已随机复活`);
@@ -3200,7 +3189,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       }
 
       const { dx, dy } = getDuelMovement(player.id);
-      const speed = player.ghostTime > 0 ? 4.5 : 4.0;
+      const speed = (player.ghostTime > 0 ? 4.5 : 4.0) * playerSpeedMultiplier;
       player.vx = dx * speed;
       player.vy = dy * speed;
       player.isMoving = dx !== 0 || dy !== 0;
@@ -3280,7 +3269,7 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
       // 1. Move Player
       let dx = 0;
       let dy = 0;
-      const speed = 4.2;
+      const speed = 4.2 * playerSpeedMultiplier;
 
       if (keysPressed.current['w'] || keysPressed.current['arrowup']) dy -= 1;
       if (keysPressed.current['s'] || keysPressed.current['arrowdown']) dy += 1;
@@ -3674,7 +3663,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           player.isPainted = false;
           player.camoTimeLeft = 0;
           player.targetColor = '#ffffff';
-          setActiveColor('#ffffff');
           spawnSplatParticles(player.x, player.y, '#ffffff');
           audio.playAlert(0.4);
         }
@@ -5009,24 +4997,8 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
     player.targetColor = color;
     player.isPainted = true;
     resetCamouflageTimer(player);
-    setActiveColor(color);
-
     audio.playSplat();
     spawnSplatParticles(player.x, player.y, color);
-  };
-
-  // Quick select color from custom palette
-  const handleSelectPaletteColor = (hex: string) => {
-    if (isPaused || !isGameRunning.current) return;
-    if (isLocalDuel) return;
-    const player = playerRef.current;
-    player.targetColor = hex;
-    player.isPainted = true;
-    resetCamouflageTimer(player);
-    setActiveColor(hex);
-
-    audio.playSplat();
-    spawnSplatParticles(player.x, player.y, hex);
   };
 
   const updateTouchMovement = (clientX: number, clientY: number) => {
@@ -5108,200 +5080,25 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
   const progressLabel = isTerritoryMap
     ? (lang === 'en' ? 'TERRITORY EXPLORED' : '领地探索率')
     : CANVAS_TRANSLATIONS[lang].restoration;
+  const compactStatusText = isLocalDuel
+    ? `P1 ${duelP1Percent.toFixed(1)}% · ${duelTimeLeft}s · P2 ${duelP2Percent.toFixed(1)}%`
+    : isTerritoryMap
+    ? `${lang === 'en' ? 'Claim' : '占领'} ${soloTerritoryPercent.toFixed(1)}% / ${restorationTargetPercent}%`
+    : isRestorationLevel
+    ? `${progressLabel} ${displayedRestorationRate}% / ${restorationTargetPercent}%`
+    : `${lang === 'en' ? 'Stealth' : '隐蔽'} ${matchRate}%`;
 
   return (
-    <div className="flex flex-col items-center w-full">
-      {/* HUD status bars */}
-      <div className="w-full flex flex-wrap gap-4 items-center justify-between mb-4 bg-[#151515] text-[#f2f2f2] p-4 rounded-lg border border-white/10 shadow-lg">
-        {/* Camouflage meter / Duel score */}
-        {isLocalDuel ? (
-          <div className="flex flex-col gap-1 min-w-[260px]">
-            <div className="flex items-center justify-between text-[10px] font-mono">
-              <span className="text-amber-300 font-bold">P1 {duelP1Percent.toFixed(1)}%</span>
-              <span className="text-white/55">{lang === 'en' ? 'LOCAL DUEL' : '本地双人'}</span>
-              <span className="text-cyan-300 font-bold">P2 {duelP2Percent.toFixed(1)}%</span>
-            </div>
-            <div className="relative h-4 bg-black rounded overflow-hidden border border-white/10">
-              <div
-                className="absolute left-0 top-0 h-full bg-amber-400/80 transition-all duration-200"
-                style={{ width: `${Math.min(100, duelP1Percent)}%` }}
-              />
-              <div
-                className="absolute right-0 top-0 h-full bg-cyan-400/80 transition-all duration-200"
-                style={{ width: `${Math.min(100, duelP2Percent)}%` }}
-              />
-              <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
-                {duelTimeLeft}s · KO {duelDeaths.p1}:{duelDeaths.p2}
-              </span>
-            </div>
-          </div>
-        ) : (
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-white/50 tracking-wider font-serif">
-              {lang === 'en' ? 'MUTATION INTEGRITY' : 'MUTATION INTEGRITY / 伪装度'}
-            </span>
-            <div className="relative w-32 h-4 bg-black rounded overflow-hidden border border-white/10">
-              <div
-                className={`h-full transition-all duration-150 ${
-                  matchRate > 85 ? 'bg-emerald-500' : matchRate > 50 ? 'bg-[#c5a059]' : 'bg-red-500'
-                }`}
-                style={{ width: `${matchRate}%` }}
-              />
-              <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
-                {matchRate}%
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Level Objectives: Orbs/Restoration & Exit Status */}
-        <div className="flex items-center gap-5">
-          {isRestorationLevel ? (
-            <div className="flex items-center gap-2 min-w-[230px]">
-              <span className="text-xs text-white/50 tracking-wider font-serif">
-                {progressLabel}
-              </span>
-              <div className="relative w-28 h-4 bg-black rounded overflow-hidden border border-white/10">
-                <div
-                  className="h-full bg-gradient-to-r from-amber-600 to-[#c5a059] transition-all duration-300"
-                  style={{ width: `${restorationProgressWidth}%` }}
-                />
-                <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
-                  {displayedRestorationRate}%/{restorationTargetPercent}%
-                </span>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-white/50 tracking-wider font-serif">
-                {lang === 'en' ? 'COLOR FRAGMENTS' : 'FRAGMENTS / 碎片'}
-              </span>
-              <div className="flex gap-1.5">
-                {[0, 1, 2].map(idx => (
-                  <div
-                    key={idx}
-                    className={`w-5 h-5 rounded border flex items-center justify-center transition-all ${
-                      idx < orbsCollected
-                        ? 'bg-[#c5a059] border-[#c5a059] text-black font-bold shadow-[0_0_8px_rgba(197,160,89,0.4)] scale-105'
-                        : 'bg-black/60 border-white/10 text-white/20'
-                    }`}
-                  >
-                    <span className="text-[10px] font-serif">{idx < orbsCollected ? '✦' : '✧'}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-white/50 tracking-wider font-serif">
-              {lang === 'en' ? 'EXTRACTION GATE' : 'EXTRACTION / 门状态'}
-            </span>
-            <span className={`px-2.5 py-0.5 rounded text-[9px] font-mono font-bold uppercase tracking-widest ${
-              isExitOpen ? 'bg-emerald-950/60 text-emerald-400 border border-emerald-800 animate-pulse' : 'bg-black/60 text-white/30 border border-white/5'
-            }`}>
-              {isExitOpen
-                ? (lang === 'en' ? 'OPENED' : 'OPENED / 已开启')
-                : (lang === 'en' ? 'LOCKED' : 'LOCKED / 锁闭中')}
-            </span>
-          </div>
-        </div>
-
-        {/* Patrol Guard Alert Level (Global threat) */}
-        <div className="flex items-center gap-3">
-          <span className="text-xs text-white/50 tracking-wider font-serif">
-            {lang === 'en' ? 'RISK ALERT' : 'RISK ALERT / 警惕度'}
-          </span>
-          <div className="relative w-32 h-4 bg-black rounded overflow-hidden border border-white/10">
-            <div
-              className={`h-full transition-all duration-150 ${
-                alertLevel > 75 ? 'bg-red-500 animate-pulse' : alertLevel > 35 ? 'bg-orange-500' : 'bg-[#c5a059]'
-              }`}
-              style={{ width: `${alertLevel}%` }}
-            />
-            <span className="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-white shadow-sm font-mono">
-              {alertLevel}%
-            </span>
-          </div>
-        </div>
+    <div className="flex flex-col items-center w-full gap-2">
+      <div className="w-full flex items-center justify-between gap-3 px-2 py-1.5 bg-black/35 border border-white/10 rounded text-[10px] md:text-xs font-mono text-white/70">
+        <span className="truncate font-bold text-[#c5a059]">
+          {lang === 'en' ? (painting.nameEn || painting.name) : painting.name}
+        </span>
+        <span className="shrink-0 text-white/80">{compactStatusText}</span>
       </div>
 
-      {/* Special mask level explanation banner */}
-      {isRestorationLevel && (
-        <div className="w-full mb-4 bg-[#c5a059]/10 border border-[#c5a059]/30 text-[#c5a059] px-4 py-3 rounded-lg text-xs font-mono leading-relaxed flex items-start gap-3">
-          <span className="text-base flex-shrink-0">{isTerritoryMap ? '🟡' : painting.proceduralType === 'sunflowers' ? '🌻' : '🎨'}</span>
-          <div>
-            <strong className="block text-[#c5a059] mb-0.5 uppercase tracking-wider font-bold">
-              {isLocalDuel
-                ? (lang === 'en' ? 'LOCAL DUEL: CLAIM, TRAP, RESPAWN' : '【本地双人：占领、围困、复活】')
-                : isTerritoryMap
-                ? (lang === 'en' ? 'MOBILE TERRITORY TEST: DRAW, CLOSE, CLAIM' : '【移动端领地验证：画线、闭合、占领】')
-                : painting.proceduralType === 'sunflowers'
-                ? (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: VAN GOGH REVEAL' : '【向日葵关卡专属特殊机制：色彩复苏】')
-                : (lang === 'en' ? 'SPECIAL MASTERPIECE MECHANIC: ARTWORK RESTORATION' : '【特殊机制：画作复苏】')
-              }
-            </strong>
-            <span>
-              {isLocalDuel
-                ? (lang === 'en'
-                  ? `P1 uses WASD or the mobile joystick + Space/F. P2 uses Arrow Keys + Enter/Right Shift. Claim more territory in ${duelDurationLabel}; enclosing a rival removes them for 2 seconds.`
-                  : `P1 使用 WASD 或手机摇杆 + 空格/F，P2 使用方向键 + Enter/右Shift。${duelDurationLabel}内占领更多领地；围住对手会让其消失2秒后随机复活。`)
-                : isTerritoryMap
-                ? (lang === 'en'
-                  ? `Drag the mobile joystick or use WASD. Leave your home zone, draw a loop, then return to your territory to claim the enclosed area. Claim ${restorationTargetPercent}% to open the exit.`
-                  : `拖动手机摇杆或使用 WASD。离开初始领地画出闭合路线，回到自己的领地后整块占领。占领 ${restorationTargetPercent}% 后出口开启。`)
-                : painting.proceduralType === 'sunflowers'
-                ? (lang === 'en'
-                  ? `The masterpiece starts covered in a white canvas! Move around or press Space / F (or click) to scratch it off. Reach ${restorationTargetPercent}% restoration to open the exit; restored paint also blocks guard movement.`
-                  : `向日葵画作开始时被白色画布完全遮挡！移动小人或按空格键/F键（或点击画面）可以吸走白底。复苏达到 ${restorationTargetPercent}% 后出口开启；已复苏区域也会阻挡守卫移动。`)
-                : (lang === 'en'
-                  ? `The masterpiece starts covered in a white canvas! Restore ${restorationTargetPercent}% to open the exit. Restored paint becomes a guard barrier. Collect power-ups: ⏱️ Time Freeze, 🐸 Decoy Frog, 🎨 Palette Upgrade!`
-                  : `画作开始时被白色画布完全遮挡！复苏 ${restorationTargetPercent}% 后出口开启。已复苏区域会成为守卫无法穿过的屏障。收集道具：⏱️ 时间冻结、🐸 迷惑蛙、🎨 调色盘升级！`)
-              }
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* Mask Level Real-time HUD Status */}
-      {isRestorationLevel && (
-        <div className="w-full mb-4 bg-black/40 border border-white/10 rounded-xl p-4 flex flex-col gap-1.5">
-          {/* Reveal rate */}
-          <div className="w-full flex flex-col gap-1.5">
-            <div className="flex justify-between items-center text-xs">
-              <span className="font-bold tracking-wider text-[#c5a059] flex items-center gap-2">
-                {isTerritoryMap ? '🟡 ' : painting.proceduralType === 'sunflowers' ? '🌻 ' : '🎨 '}
-                {isTerritoryMap ? (lang === 'en' ? 'TERRITORY EXPLORED' : '领地探索率') : (lang === 'en' ? 'ARTWORK RESTORATION' : '画作复苏率')}
-              </span>
-              <span className="font-mono font-bold text-[#c5a059]">
-                {displayedRestorationRate}% / {restorationTargetPercent}%
-              </span>
-            </div>
-            <div className="relative w-full h-3.5 bg-white/10 rounded-full overflow-hidden border border-white/5">
-              <div
-                className="h-full bg-gradient-to-r from-amber-600 to-[#c5a059] transition-all duration-300"
-                style={{ width: `${restorationProgressWidth}%` }}
-              />
-            </div>
-            <p className="text-[10px] text-white/50 italic font-sans">
-              {isLocalDuel
-                ? (lang === 'en'
-                  ? `⚔️ Timer duel: highest owned territory wins after ${duelDurationLabel}.`
-                  : `⚔️ 双人计时赛：${duelDurationLabel}后占领更多者获胜。`)
-                : isTerritoryMap
-                ? (lang === 'en'
-                  ? `🎯 Claim closed territory until you reach ${restorationTargetPercent}%, then step through the exit.`
-                  : `🎯 闭合路线扩张领地，达到 ${restorationTargetPercent}% 后进入出口通关。`)
-                : lang === 'en'
-                ? `🎯 Restore at least ${restorationTargetPercent}% of the canvas to unlock the exit, then step through the portal!`
-                : `🎯 至少复苏 ${restorationTargetPercent}% 的画布即可开启出口，然后进入传送门逃出！`}
-            </p>
-          </div>
-        </div>
-      )}
-
       {/* Main interactive Canvas wrapped in an Ornate Painting Frame */}
-      <div className="relative bg-black p-0 border-[12px] md:border-[16px] border-[#c5a059] shadow-[0_20px_50px_rgba(0,0,0,0.8)] group transition-all duration-300 hover:shadow-[0_0_35px_rgba(197,160,89,0.2)] w-full flex justify-center">
+      <div className="relative bg-black p-0 border-[6px] md:border-[14px] border-[#c5a059] shadow-[0_20px_50px_rgba(0,0,0,0.8)] group transition-all duration-300 hover:shadow-[0_0_35px_rgba(197,160,89,0.2)] w-full flex justify-center">
         {/* Corner metallic museum frames details */}
         <div className="absolute top-1 left-1 w-4 h-4 border-t-2 border-l-2 border-[#c5a059] opacity-85"></div>
         <div className="absolute top-1 right-1 w-4 h-4 border-t-2 border-r-2 border-[#c5a059] opacity-85"></div>
@@ -5360,6 +5157,23 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
           </div>
         )}
 
+        <div className="absolute right-2 top-2 z-30 flex gap-1.5">
+          <button
+            onClick={() => setIsPaused(!isPaused)}
+            className="w-8 h-8 md:w-9 md:h-9 bg-black/55 hover:bg-black/80 text-white/85 hover:text-white rounded-full border border-white/15 backdrop-blur transition-all flex items-center justify-center"
+            title={isPaused ? CANVAS_TRANSLATIONS[lang].controlsResume : CANVAS_TRANSLATIONS[lang].controlsPause}
+          >
+            {isPaused ? <Play size={14} /> : <Pause size={14} />}
+          </button>
+          <button
+            onClick={onToggleMute}
+            className="w-8 h-8 md:w-9 md:h-9 bg-black/55 hover:bg-black/80 text-white/85 hover:text-white rounded-full border border-white/15 backdrop-blur transition-all flex items-center justify-center"
+            title={isMuted ? CANVAS_TRANSLATIONS[lang].controlsUnmute : CANVAS_TRANSLATIONS[lang].controlsMute}
+          >
+            {isMuted ? <VolumeX size={14} /> : <Volume2 size={14} />}
+          </button>
+        </div>
+
         {/* Hidden Canvas used for exact pixel matching */}
         <canvas
           ref={offscreenCanvasRef}
@@ -5381,120 +5195,6 @@ export const GameCanvas: React.FC<GameCanvasProps> = ({
             </button>
           </div>
         )}
-      </div>
-
-      {/* Palette Color Pickers below painting */}
-      <div className="w-full mt-5 bg-[#151515] border border-white/10 p-5 rounded-lg flex flex-col md:flex-row items-center justify-between gap-5 shadow-lg">
-        {/* Curated Color Palette */}
-        <div className="flex flex-col gap-2 w-full md:w-auto">
-          <div className="flex items-center gap-2.5">
-            <span className="text-xs font-serif italic text-[#c5a059] tracking-widest uppercase">{CANVAS_TRANSLATIONS[lang].colorSpectrum}</span>
-            <span className="text-[9px] tracking-widest font-mono text-white/40 bg-black px-2 py-0.5 rounded border border-white/5">
-              {CANVAS_TRANSLATIONS[lang].colorSpectrumTip}
-            </span>
-          </div>
-          <div className="flex flex-wrap gap-2.5">
-            {painting.palette.map((color, idx) => {
-              const colName = lang === 'en' ? (color.nameEn || color.name) : color.name;
-              return (
-                <button
-                  key={idx}
-                  onClick={() => handleSelectPaletteColor(color.hex)}
-                  className="w-10 h-10 rounded border transition-all relative group hover:scale-105 active:scale-95 shadow flex items-end justify-center pb-0.5"
-                  style={{
-                    backgroundColor: color.hex,
-                    borderColor: activeColor === color.hex ? '#c5a059' : 'rgba(255,255,255,0.15)',
-                    boxShadow: activeColor === color.hex ? `0 0 12px ${color.hex}99` : 'none'
-                  }}
-                  title={colName}
-                >
-                  <div className="absolute inset-0 bg-black/10 rounded opacity-0 group-hover:opacity-100 transition-opacity" />
-                  <span className="text-[8px] font-mono text-white mix-blend-difference bg-black/60 px-1 rounded truncate max-w-[90%]">
-                    {colName}
-                  </span>
-                  {activeColor === color.hex && (
-                    <div className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-[#c5a059] text-black rounded-full border border-white flex items-center justify-center font-bold text-[8px] shadow">
-                      ✓
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Current Ink status & Control Actions */}
-        <div className="flex items-center gap-4 flex-shrink-0 self-stretch md:self-auto justify-between md:justify-end w-full md:w-auto border-t border-white/5 md:border-0 pt-4 md:pt-0">
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-white/40 font-serif uppercase tracking-widest">{CANVAS_TRANSLATIONS[lang].activeColor}</span>
-            <div className="flex items-center gap-2.5 bg-black/50 p-2 pr-4 rounded border border-white/5">
-              <div
-                className="w-8 h-8 rounded border border-white/10 shadow-inner"
-                style={{ backgroundColor: activeColor }}
-              />
-              <span className="text-xs font-mono font-bold text-white tracking-wider">{activeColor.toUpperCase()}</span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setIsPaused(!isPaused)}
-              className="p-3 bg-black/40 hover:bg-black/80 text-white/80 hover:text-white rounded border border-white/10 transition-all"
-              title={isPaused ? CANVAS_TRANSLATIONS[lang].controlsResume : CANVAS_TRANSLATIONS[lang].controlsPause}
-            >
-              {isPaused ? <Play size={16} /> : <Pause size={16} />}
-            </button>
-
-            <button
-              onClick={onToggleMute}
-              className="p-3 bg-black/40 hover:bg-black/80 text-white/80 hover:text-white rounded border border-white/10 transition-all"
-              title={isMuted ? CANVAS_TRANSLATIONS[lang].controlsUnmute : CANVAS_TRANSLATIONS[lang].controlsMute}
-            >
-              {isMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Desktop Keyboard instructions helper */}
-      <div className="w-full mt-4 px-5 py-3 bg-[#151515]/40 rounded border border-white/5 flex flex-col sm:flex-row items-center justify-between text-[11px] text-white/40 font-mono gap-3">
-        {isLocalDuel ? (
-          <>
-            <div className="flex items-center gap-1.5 flex-wrap justify-center">
-              <span className="text-amber-300 font-bold">P1</span>
-              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">WASD</span>
-              <span>{lang === 'en' ? 'move' : '移动'}</span>
-              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">Space/F</span>
-              <span>{lang === 'en' ? 'blend' : '吸色'}</span>
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap justify-center">
-              <span className="text-cyan-300 font-bold">P2</span>
-              <span className="bg-black text-cyan-300 px-2 py-0.5 rounded border border-white/10">Arrow Keys</span>
-              <span>{lang === 'en' ? 'move' : '移动'}</span>
-              <span className="bg-black text-cyan-300 px-2 py-0.5 rounded border border-white/10">Enter / Right Shift</span>
-              <span>{lang === 'en' ? 'blend' : '吸色'}</span>
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="flex items-center gap-1.5 flex-wrap justify-center">
-              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">W</span>
-              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">A</span>
-              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">S</span>
-              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">D</span>
-              <span>{lang === 'en' ? 'or Arrow Keys to move player' : '或 方向键 移动小人'}</span>
-            </div>
-            <div className="flex items-center gap-1.5 flex-wrap justify-center">
-              <span className="bg-black text-[#c5a059] px-2.5 py-0.5 rounded border border-white/10">Space 键</span>
-              <span>{lang === 'en' ? 'or' : '或'}</span>
-              <span className="bg-black text-[#c5a059] px-2 py-0.5 rounded border border-white/10">F 键</span>
-              <span>{lang === 'en' ? 'to blend into background (6s)' : '吸取背景色 (持续 6 秒)'}</span>
-            </div>
-          </>
-        )}
-        <div className="hidden lg:block text-[#c5a059]/60">
-          <span>{CANVAS_TRANSLATIONS[lang].generalTip}</span>
-        </div>
       </div>
     </div>
   );
